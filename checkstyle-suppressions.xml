@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!DOCTYPE suppressions PUBLIC
+    "-//Checkstyle//DTD SuppressionFilter Configuration 1.2//EN"
+    "https://checkstyle.org/dtds/suppressions_1_2.dtd">
+
+<suppressions>
+  <!--
+    The StoreOps error contract applies to production code: "no raw Error throws in services or
+    routes". Test methods declare `throws Exception` because that is the MockMvc idiom, and tests
+    legitimately catch broadly when asserting on failure. Everything else in checkstyle.xml -
+    imports, naming, formatting, structure - still applies to test sources.
+  -->
+  <suppress files="[\\/]src[\\/]test[\\/]" checks="IllegalThrows|IllegalCatch"/>
+  <suppress files="[\\/]src[\\/]test[\\/]" id="NoRawErrorThrows"/>
+</suppressions>

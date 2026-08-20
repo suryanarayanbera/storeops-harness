@@ -1,0 +1,57 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: storeops-api
+
+  # H2 in-memory. DB_CLOSE_DELAY=-1 keeps the database alive for the whole JVM lifetime rather
+  # than dropping it when the first connection closes.
+  datasource:
+    url: jdbc:h2:mem:storeops;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: storeops
+    password: ""
+
+  # Browse the tables at http://localhost:8080/h2-console
+  # JDBC URL: jdbc:h2:mem:storeops   User: storeops   Password: (blank)
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        web-allow-others: false
+
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      # Schema is created from the @Entity classes on startup and dropped on shutdown.
+      ddl-auto: create-drop
+    # Required so data.sql runs AFTER Hibernate has created the schema, not before.
+    defer-datasource-initialization: true
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  sql:
+    init:
+      mode: always
+
+  jackson:
+    # Instants as ISO-8601 strings rather than epoch numbers, so responses are readable in curl.
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+
+  mvc:
+    problemdetails:
+      # Off deliberately: GlobalExceptionHandler owns the error body shape
+      # (code, message, statusCode, path, timestamp).
+      enabled: false
+
+logging:
+  level:
+    root: INFO
+    com.cognizant.storeops: DEBUG
