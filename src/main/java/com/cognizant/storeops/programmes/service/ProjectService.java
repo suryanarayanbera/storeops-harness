@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Business logic for store programmes and their staff membership.
@@ -94,9 +95,13 @@ public class ProjectService {
      *
      * <p>Stub: reached from {@link #close(String, String)} only, no endpoint yet.
      *
+     * <p>Transactional so the published event reaches its after-commit subscribers; without a
+     * transaction the reports module would never queue the summary.
+     *
      * @throws NotFoundError when no programme has that id
      * @throws ConflictError when the programme is already closed
      */
+    @Transactional
     public Project close(final String id, final String closedByUserId) {
         final Project existing = getById(id);
         if (existing.isClosed()) {

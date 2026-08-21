@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Business logic for operational activities.
@@ -101,10 +102,15 @@ public class TaskService {
      * Applies a partial update. A status change publishes {@link TaskStatusChangedEvent}; the alerts
      * and reports modules decide for themselves whether they care.
      *
+     * <p>Transactional for two reasons: the read-modify-write must not interleave, and the event is
+     * delivered after this transaction commits. Without the annotation there is no transaction to
+     * commit and the subscribers would never run.
+     *
      * @throws ValidationError when the payload changes nothing or names an unknown assignee
      * @throws NotFoundError   when no activity has that id
      * @throws ConflictError   when the status transition is not permitted
      */
+    @Transactional
     public Task update(final String id, final UpdateTaskRequest request) {
         if (request.isEmpty()) {
             throw new ValidationError("Update must change at least one of status, priority or assigneeId");
@@ -158,7 +164,10 @@ public class TaskService {
      *
      * <p>Stub: nothing schedules this yet. It exists so the SLA breach feature has a seam that
      * already respects the event-bus rule, and returns the number of events published.
+     *
+     * <p>Transactional so the published events reach their after-commit subscribers.
      */
+    @Transactional
     public int publishOverdueBreaches() {
         final Instant now = clock.instant();
         final List<Task> breached = taskRepository.findAll().stream()

@@ -1,0 +1,153 @@
+package com.cognizant.storeops;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
+
+import com.cognizant.storeops.activities.domain.Task;
+import com.cognizant.storeops.activities.domain.TaskStatus;
+import com.cognizant.storeops.activities.dto.CreateTaskRequest;
+import com.cognizant.storeops.activities.dto.UpdateTaskRequest;
+import com.cognizant.storeops.activities.service.TaskService;
+import com.cognizant.storeops.alerts.domain.AlertType;
+import com.cognizant.storeops.alerts.domain.Notification;
+import com.cognizant.storeops.alerts.service.NotificationService;
+import com.cognizant.storeops.programmes.domain.Project;
+import com.cognizant.storeops.programmes.dto.CreateProjectRequest;
+import com.cognizant.storeops.programmes.service.ProjectService;
+import com.cognizant.storeops.reports.domain.Report;
+import com.cognizant.storeops.reports.domain.ReportType;
+import com.cognizant.storeops.reports.service.ReportService;
+import com.cognizant.storeops.shared.events.EventBus;
+import com.cognizant.storeops.shared.events.TaskStatusChangedEvent;
+import com.cognizant.storeops.support.FailingSubscriber;
+import java.time.Instant;
+import java.util.List;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.transaction.support.TransactionTemplate;
+
+/**
+ * Event delivery through the real container: publisher to subscriber, across a module boundary,
+ * after commit.
+ *
+ * <p>These are the tests that fail if the wiring is wrong in the way that is hardest to notice.
+ * {@code @TransactionalEventListener(AFTER_COMMIT)} does nothing at all when no transaction is
+ * active, so a missing {@code @Transactional} on a publishing service method would silently stop all
+ * alerting while every other test still passed.
+ */
+@SpringBootTest
+@Import(FailingSubscriber.class)
+class EventDeliveryIntegrationTest {
+
+    @Autowired
+    private TaskService taskService;
+
+    @Autowired
+    private ProjectService projectService;
+
+    @Autowired
+    private NotificationService notificationService;
+
+    @Autowired
+    private ReportService reportService;
+
+    @Autowired
+    private EventBus eventBus;
+
+    @Autowired
+    private TransactionTemplate transactionTemplate;
+
+    @Autowired
+    private FailingSubscriber failingSubscriber;
+
+    private Task createTask(final String title) {
+        return taskService.create(new CreateTaskRequest(
+                title, null, null, null, "store-001", null, "user-004", Instant.now().plusSeconds(3_600)));
+    }
+
+    private List<Notification> alertsFor(final String recipientId) {
+        return notificationService.list(recipientId, null);
+    }
+
+    @Test
+    @DisplayName("blocking an activity reaches the alerts module, with no import between them")
+    void blockedTaskReachesAlertsModule() {
+        final Task task = createTask("Delivery check - blocked");
+        final int before = alertsFor("user-004").size();
+
+        taskService.update(task.id(), new UpdateTaskRequest(TaskStatus.BLOCKED, null, null));
+
+        final List<Notification> after = alertsFor("user-004");
+        assertThat(after).hasSize(before + 1);
+        assertThat(after.getFirst().alertType()).isEqualTo(AlertType.ESCALATION);
+        assertThat(after.getFirst().sourceRef()).isEqualTo(task.id());
+    }
+
+    @Test
+    @DisplayName("a transition the alerts module does not care about raises nothing")
+    void unremarkableTransitionRaisesNothing() {
+        final Task task = createTask("Delivery check - in progress");
+        final int before = alertsFor("user-004").size();
+
+        taskService.update(task.id(), new UpdateTaskRequest(TaskStatus.IN_PROGRESS, null, null));
+
+        assertThat(alertsFor("user-004")).hasSize(before);
+    }
+
+    @Test
+    @DisplayName("closing a programme reaches the reports module")
+    void closedProgrammeReachesReportsModule() {
+        final Project project = projectService.create(new CreateProjectRequest(
+                "Delivery check programme", null, "store-001", "region-north", "user-002"));
+        final int before = reportService.findByScopeId("store-001").size();
+
+        projectService.close(project.id(), "user-002");
+
+        final List<Report> reports = reportService.findByScopeId("store-001");
+        assertThat(reports).hasSize(before + 1);
+        assertThat(reports.getFirst().reportType()).isEqualTo(ReportType.STORE_SUMMARY);
+    }
+
+    @Test
+    @DisplayName("a rolled back transaction delivers nothing - the point of after-commit dispatch")
+    void rollbackDeliversNothing() {
+        final Task task = createTask("Delivery check - rollback");
+        final int before = alertsFor("user-004").size();
+
+        transactionTemplate.executeWithoutResult(status -> {
+            eventBus.publish(new TaskStatusChangedEvent(
+                    task.id(), "store-001", "TODO", "BLOCKED", "HIGH", "user-004", Instant.now()));
+            status.setRollbackOnly();
+        });
+
+        assertThat(alertsFor("user-004")).hasSize(before);
+    }
+
+    @Test
+    @DisplayName("publishing with no transaction delivers nothing, so publishers must be transactional")
+    void publishingOutsideATransactionDeliversNothing() {
+        final int before = alertsFor("user-004").size();
+
+        eventBus.publish(new TaskStatusChangedEvent(
+                "task-no-tx", "store-001", "TODO", "BLOCKED", "HIGH", "user-004", Instant.now()));
+
+        assertThat(alertsFor("user-004")).hasSize(before);
+    }
+
+    @Test
+    @DisplayName("a failing subscriber does not break the publisher")
+    void failingSubscriberIsContained() {
+        // FailingSubscriber throws on every ProbeEvent. The ErrorHandler configured in
+        // EventBusConfiguration must absorb it; without that bean this call propagates.
+        final int before = failingSubscriber.invocationCount();
+
+        assertThatCode(() -> eventBus.publish(new FailingSubscriber.ProbeEvent(Instant.now())))
+                .doesNotThrowAnyException();
+
+        // Asserted so the test cannot pass merely because dispatch was broken.
+        assertThat(failingSubscriber.invocationCount()).isEqualTo(before + 1);
+    }
+}

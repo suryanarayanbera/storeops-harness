@@ -6,8 +6,6 @@ import com.cognizant.storeops.alerts.domain.AlertType;
 import com.cognizant.storeops.alerts.domain.Notification;
 import com.cognizant.storeops.alerts.domain.NotificationStatus;
 import com.cognizant.storeops.alerts.service.NotificationService;
-import com.cognizant.storeops.shared.events.InMemoryEventBus;
-import com.cognizant.storeops.shared.events.ProgrammeClosedEvent;
 import com.cognizant.storeops.shared.events.TaskOverdueEvent;
 import com.cognizant.storeops.shared.events.TaskStatusChangedEvent;
 import com.cognizant.storeops.support.FakeNotificationRepository;
@@ -20,7 +18,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * The alerts module's reaction to events published by other modules.
+ * The alerting decision: which operational events deserve an alert, for whom, and of what type.
+ *
+ * <p>Handlers are invoked directly rather than through the event bus. Dispatch is Spring's
+ * responsibility and is verified once, end to end, in {@code EventDeliveryIntegrationTest}; what
+ * belongs here is this module's judgement, which is worth testing without a container.
  *
  * <p>Nothing here imports the activities module: an event carrying strings is all the alerts module
  * ever sees, which is what makes the boundary rule hold.
@@ -29,16 +31,15 @@ class AlertEventListenerTest {
 
     private static final Instant NOW = Instant.parse("2026-02-01T10:00:00Z");
 
-    private InMemoryEventBus eventBus;
     private FakeNotificationRepository notificationRepository;
-    private NotificationService notificationService;
+    private AlertEventListener listener;
 
     @BeforeEach
     void setUp() {
-        eventBus = new InMemoryEventBus();
         notificationRepository = new FakeNotificationRepository();
-        notificationService = new NotificationService(notificationRepository, Clock.fixed(NOW, ZoneOffset.UTC));
-        new AlertEventListener(eventBus, notificationService).register();
+        final NotificationService notificationService =
+                new NotificationService(notificationRepository, Clock.fixed(NOW, ZoneOffset.UTC));
+        listener = new AlertEventListener(notificationService);
     }
 
     private List<Notification> raisedAlerts() {
@@ -48,7 +49,7 @@ class AlertEventListenerTest {
     @Test
     @DisplayName("a BLOCKED transition raises an ESCALATION alert for the assignee")
     void blockedTransitionRaisesEscalation() {
-        eventBus.publish(new TaskStatusChangedEvent(
+        listener.onTaskStatusChanged(new TaskStatusChangedEvent(
                 "task-001", "store-001", "IN_PROGRESS", "BLOCKED", "HIGH", "user-004", NOW));
 
         assertThat(raisedAlerts()).hasSize(1);
@@ -63,7 +64,7 @@ class AlertEventListenerTest {
     @Test
     @DisplayName("a DONE transition raises no alert")
     void doneTransitionRaisesNothing() {
-        eventBus.publish(new TaskStatusChangedEvent(
+        listener.onTaskStatusChanged(new TaskStatusChangedEvent(
                 "task-001", "store-001", "IN_PROGRESS", "DONE", "HIGH", "user-004", NOW));
 
         assertThat(raisedAlerts()).isEmpty();
@@ -72,7 +73,7 @@ class AlertEventListenerTest {
     @Test
     @DisplayName("a BLOCKED transition on an unassigned activity raises no alert")
     void blockedUnassignedRaisesNothing() {
-        eventBus.publish(new TaskStatusChangedEvent(
+        listener.onTaskStatusChanged(new TaskStatusChangedEvent(
                 "task-001", "store-001", "TODO", "BLOCKED", "HIGH", null, NOW));
 
         assertThat(raisedAlerts()).isEmpty();
@@ -81,7 +82,7 @@ class AlertEventListenerTest {
     @Test
     @DisplayName("a CRITICAL overdue activity raises an SLA_BREACH alert")
     void criticalOverdueRaisesSlaBreach() {
-        eventBus.publish(new TaskOverdueEvent(
+        listener.onTaskOverdue(new TaskOverdueEvent(
                 "task-002", "store-001", "CRITICAL", "user-003", NOW.minusSeconds(3_600), NOW));
 
         assertThat(raisedAlerts()).hasSize(1);
@@ -94,16 +95,17 @@ class AlertEventListenerTest {
     @Test
     @DisplayName("a LOW priority overdue activity raises no SLA alert")
     void lowPriorityOverdueRaisesNothing() {
-        eventBus.publish(new TaskOverdueEvent(
+        listener.onTaskOverdue(new TaskOverdueEvent(
                 "task-003", "store-001", "LOW", "user-003", NOW.minusSeconds(3_600), NOW));
 
         assertThat(raisedAlerts()).isEmpty();
     }
 
     @Test
-    @DisplayName("the alerts module ignores events it did not subscribe to")
-    void unrelatedEventIsIgnored() {
-        eventBus.publish(new ProgrammeClosedEvent("project-001", "store-001", "user-002", NOW));
+    @DisplayName("an overdue activity with no assignee raises no SLA alert")
+    void overdueUnassignedRaisesNothing() {
+        listener.onTaskOverdue(new TaskOverdueEvent(
+                "task-004", "store-001", "HIGH", null, NOW.minusSeconds(3_600), NOW));
 
         assertThat(raisedAlerts()).isEmpty();
     }

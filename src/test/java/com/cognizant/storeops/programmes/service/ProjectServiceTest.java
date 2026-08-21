@@ -13,14 +13,13 @@ import com.cognizant.storeops.programmes.dto.CreateProjectRequest;
 import com.cognizant.storeops.shared.error.ConflictError;
 import com.cognizant.storeops.shared.error.NotFoundError;
 import com.cognizant.storeops.shared.error.ValidationError;
-import com.cognizant.storeops.shared.events.InMemoryEventBus;
 import com.cognizant.storeops.shared.events.ProgrammeClosedEvent;
 import com.cognizant.storeops.staff.service.UserService;
 import com.cognizant.storeops.support.FakeProjectRepository;
+import com.cognizant.storeops.support.RecordingEventBus;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -33,22 +32,22 @@ class ProjectServiceTest {
 
     private FakeProjectRepository projectRepository;
     private UserService userService;
-    private InMemoryEventBus eventBus;
+    private RecordingEventBus eventBus;
     private ProjectService projectService;
-    private List<ProgrammeClosedEvent> closedEvents;
 
     @BeforeEach
     void setUp() {
         projectRepository = new FakeProjectRepository();
         userService = mock(UserService.class);
-        eventBus = new InMemoryEventBus();
+        eventBus = new RecordingEventBus();
         projectService = new ProjectService(projectRepository, userService, eventBus,
                 Clock.fixed(NOW, ZoneOffset.UTC));
 
-        closedEvents = new ArrayList<>();
-        eventBus.subscribe(ProgrammeClosedEvent.class, closedEvents::add);
-
         when(userService.exists("user-002")).thenReturn(true);
+    }
+
+    private List<ProgrammeClosedEvent> closedEvents() {
+        return eventBus.published(ProgrammeClosedEvent.class);
     }
 
     private CreateProjectRequest createRequest() {
@@ -107,11 +106,11 @@ class ProjectServiceTest {
 
         assertThat(closed.status()).isEqualTo(ProjectStatus.CLOSED);
         assertThat(closed.closedAt()).isEqualTo(NOW);
-        assertThat(closedEvents).hasSize(1);
-        assertThat(closedEvents.getFirst().projectId()).isEqualTo("project-001");
-        assertThat(closedEvents.getFirst().storeId()).isEqualTo("store-001");
-        assertThat(closedEvents.getFirst().closedByUserId()).isEqualTo("user-002");
-        assertThat(closedEvents.getFirst().eventType()).isEqualTo("PROGRAMME_CLOSED");
+        assertThat(closedEvents()).hasSize(1);
+        assertThat(closedEvents().getFirst().projectId()).isEqualTo("project-001");
+        assertThat(closedEvents().getFirst().storeId()).isEqualTo("store-001");
+        assertThat(closedEvents().getFirst().closedByUserId()).isEqualTo("user-002");
+        assertThat(closedEvents().getFirst().eventType()).isEqualTo("PROGRAMME_CLOSED");
     }
 
     @Test
@@ -125,7 +124,7 @@ class ProjectServiceTest {
                     assertThat(error.getCode()).isEqualTo("PROGRAMME_ALREADY_CLOSED");
                     assertThat(error.getStatusCode()).isEqualTo(409);
                 });
-        assertThat(closedEvents).isEmpty();
+        assertThat(closedEvents()).isEmpty();
     }
 
     @Test

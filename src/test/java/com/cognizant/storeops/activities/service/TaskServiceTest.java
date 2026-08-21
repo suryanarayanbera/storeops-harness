@@ -14,15 +14,14 @@ import com.cognizant.storeops.activities.dto.UpdateTaskRequest;
 import com.cognizant.storeops.shared.error.ConflictError;
 import com.cognizant.storeops.shared.error.NotFoundError;
 import com.cognizant.storeops.shared.error.ValidationError;
-import com.cognizant.storeops.shared.events.InMemoryEventBus;
 import com.cognizant.storeops.shared.events.TaskOverdueEvent;
 import com.cognizant.storeops.shared.events.TaskStatusChangedEvent;
 import com.cognizant.storeops.staff.service.UserService;
 import com.cognizant.storeops.support.FakeTaskRepository;
+import com.cognizant.storeops.support.RecordingEventBus;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -42,25 +41,26 @@ class TaskServiceTest {
 
     private FakeTaskRepository taskRepository;
     private UserService userService;
-    private InMemoryEventBus eventBus;
+    private RecordingEventBus eventBus;
     private TaskService taskService;
-    private List<TaskStatusChangedEvent> statusEvents;
-    private List<TaskOverdueEvent> overdueEvents;
 
     @BeforeEach
     void setUp() {
         taskRepository = new FakeTaskRepository();
         userService = mock(UserService.class);
-        eventBus = new InMemoryEventBus();
+        eventBus = new RecordingEventBus();
         taskService = new TaskService(taskRepository, userService, eventBus,
                 Clock.fixed(NOW, ZoneOffset.UTC));
 
-        statusEvents = new ArrayList<>();
-        overdueEvents = new ArrayList<>();
-        eventBus.subscribe(TaskStatusChangedEvent.class, statusEvents::add);
-        eventBus.subscribe(TaskOverdueEvent.class, overdueEvents::add);
-
         when(userService.exists("user-004")).thenReturn(true);
+    }
+
+    private List<TaskStatusChangedEvent> statusEvents() {
+        return eventBus.published(TaskStatusChangedEvent.class);
+    }
+
+    private List<TaskOverdueEvent> overdueEvents() {
+        return eventBus.published(TaskOverdueEvent.class);
     }
 
     private CreateTaskRequest createRequest() {
@@ -117,7 +117,7 @@ class TaskServiceTest {
     void createPublishesNothing() {
         taskService.create(createRequest());
 
-        assertThat(statusEvents).isEmpty();
+        assertThat(statusEvents()).isEmpty();
     }
 
     @Test
@@ -150,12 +150,12 @@ class TaskServiceTest {
 
         assertThat(updated.status()).isEqualTo(TaskStatus.BLOCKED);
         assertThat(updated.updatedAt()).isEqualTo(NOW);
-        assertThat(statusEvents).hasSize(1);
-        assertThat(statusEvents.getFirst().previousStatus()).isEqualTo("TODO");
-        assertThat(statusEvents.getFirst().newStatus()).isEqualTo("BLOCKED");
-        assertThat(statusEvents.getFirst().taskId()).isEqualTo("task-001");
-        assertThat(statusEvents.getFirst().storeId()).isEqualTo("store-001");
-        assertThat(statusEvents.getFirst().eventType()).isEqualTo("TASK_STATUS_CHANGED");
+        assertThat(statusEvents()).hasSize(1);
+        assertThat(statusEvents().getFirst().previousStatus()).isEqualTo("TODO");
+        assertThat(statusEvents().getFirst().newStatus()).isEqualTo("BLOCKED");
+        assertThat(statusEvents().getFirst().taskId()).isEqualTo("task-001");
+        assertThat(statusEvents().getFirst().storeId()).isEqualTo("store-001");
+        assertThat(statusEvents().getFirst().eventType()).isEqualTo("TASK_STATUS_CHANGED");
     }
 
     @Test
@@ -167,7 +167,7 @@ class TaskServiceTest {
                 new UpdateTaskRequest(null, TaskPriority.CRITICAL, null));
 
         assertThat(updated.priority()).isEqualTo(TaskPriority.CRITICAL);
-        assertThat(statusEvents).isEmpty();
+        assertThat(statusEvents()).isEmpty();
     }
 
     @Test
@@ -177,7 +177,7 @@ class TaskServiceTest {
 
         taskService.update("task-001", new UpdateTaskRequest(TaskStatus.TODO, TaskPriority.HIGH, null));
 
-        assertThat(statusEvents).isEmpty();
+        assertThat(statusEvents()).isEmpty();
     }
 
     @Test
@@ -191,7 +191,7 @@ class TaskServiceTest {
                     assertThat(error.getCode()).isEqualTo("TASK_TRANSITION_NOT_ALLOWED");
                     assertThat(error.getStatusCode()).isEqualTo(409);
                 });
-        assertThat(statusEvents).isEmpty();
+        assertThat(statusEvents()).isEmpty();
     }
 
     @Test
@@ -217,7 +217,7 @@ class TaskServiceTest {
         final int published = taskService.publishOverdueBreaches();
 
         assertThat(published).isEqualTo(2);
-        assertThat(overdueEvents).extracting(TaskOverdueEvent::taskId)
+        assertThat(overdueEvents()).extracting(TaskOverdueEvent::taskId)
                 .containsExactlyInAnyOrder("task-high", "task-critical");
     }
 
