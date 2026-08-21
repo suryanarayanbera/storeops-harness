@@ -4,18 +4,21 @@ Retail store operations management REST API. Capstone reference codebase — **n
 Storage is in-memory H2 and services are stubs; the architecture is what's complete and enforced.
 
 Java 25 (LTS) · Spring Boot 3.5.16 · Spring Data JPA + H2 · JUnit 5 + MockMvc · Checkstyle +
-SpotBugs + ArchUnit
+SpotBugs + ArchUnit + JaCoCo
 
 ## Quick start
 
 ```bash
-./mvnw clean test       # the single gate: lint + static analysis + 96 tests
+./mvnw clean test       # the single gate: lint + static analysis + coverage + 96 tests
 ./mvnw spring-boot:run  # http://localhost:8080
 curl http://localhost:8080/api/tasks
 ```
 
-Checkstyle binds to `validate` and SpotBugs to `test-compile`, so `mvn test` runs everything and a
-green build means all gates passed. Both fail the build rather than warn. Suppressions live in
+Checkstyle binds to `validate`, SpotBugs to `test-compile` and JaCoCo's `check` to `test`, so
+`mvn test` runs everything and a green build means all gates passed. All three fail the build rather
+than warn. Coverage thresholds are a ratchet at the current baseline — bundle line 85% / branch 60%,
+and line 70% / branch 50% per class on services and listeners, where the business rules live.
+Suppressions live in
 [checkstyle-suppressions.xml](checkstyle-suppressions.xml) and
 [spotbugs-exclude.xml](spotbugs-exclude.xml), scoped per rule and package — never blanket.
 

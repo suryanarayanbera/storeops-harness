@@ -4,37 +4,61 @@
 
 ## 1. Required Context
 Before evaluating, you must read:
-* The current `sprint-N-contract.md` from `.harness/output/`
-* `generator-summary.md` from `.harness/output/`
-* `.harness/skills/architecture-principles/SKILL.md`
-* `.harness/skills/evaluation-criteria/SKILL.md`
+* The current `sprint-N-contract.md` from `.harness/output/` — the acceptance criteria you are judging against.
+* `generator-summary.md` from `.harness/output/` — the declared file list, which scopes your review.
+* `.harness/skills/architecture-principles/SKILL.md` — the rules a violation is cited against.
+* `.harness/skills/evaluation-criteria/SKILL.md` — the rubric: gates, verdict matrix, definition of done.
+* `.harness/skills/how-to-review/SKILL.md` — the method: what order to check things, what the build already proved, what only you can catch, and the shape of a finding.
+* `.harness/skills/app-context/SKILL.md` — only when a finding turns on domain vocabulary: enum values, route bases, event payloads.
 
 ## 2. Evaluation Process
-You must evaluate the code across two dimensions: Automated Hard Gates and LLM-Assessed Hard Gates.
+Three weighted dimensions, defined in `evaluation-criteria`: **A. Contract fulfilment (40%)**,
+**B. Architectural compliance (35%)**, **C. Test quality (25%)**. Each carries automated hard gates
+and LLM-assessed hard gates. Any hard gate failing is an immediate **FAIL** whatever the score.
 
-### Dimension A: Automated Hard Gates (Deterministic)
-You must execute the following bash command in the sandbox:
-`./mvnw clean test checkstyle:check spotbugs:check`
+### Step 1: Run the automated gates
+```
+./mvnw clean test
+```
+One command covers all three dimensions. Checkstyle binds to `validate`, SpotBugs to `test-compile`,
+and JaCoCo's `check` to `test`, so nothing needs invoking separately:
 
-* **Rule:** If the exit code of this command is anything other than `0`, this is an immediate **FAIL**. 
-* Do not attempt to fix the code yourself. Document the build/test error output in your feedback.
+| Dimension | Automated gate inside the build |
+| --- | --- |
+| A | JUnit — 96 baseline tests plus whatever the sprint added |
+| B | `ModuleBoundaryTest` — 12 ArchUnit rules, the project's dependency analyser — plus Checkstyle `IllegalThrows`, `NoRawErrorThrows`, `IllegalCatch` |
+| C | `jacoco:check` — bundle line ≥ 85%, branch ≥ 60%; per-class line ≥ 70%, branch ≥ 50% on services and listeners |
 
-### Dimension B: LLM-Assessed Hard Gates (Architectural Constraints)
-Review the modified source files against these non-negotiable StoreOps rules. A violation of *any* of the following results in an immediate **FAIL**:
+Exit code non-zero is a FAIL. Identify which gate fired, quote the real output, and do not fix
+anything yourself.
 
-1. **Module Boundary Violation:** Inspect the `import` statements of the changed files. No module may import from another module's repository package (e.g., `com.storeops.activities` cannot import `com.storeops.staff.repository.*`)[cite: 1].
-2. **Event Bus Enforcement:** Look for cross-module side effects. If a service directly injects and calls a service from another module for a state change (e.g., injecting `AlertService` into `TaskService`), this is a violation. Cross-module triggers must use `EventBus.emit()`[cite: 1].
-3. **Error Handling Contract:** Scan all modified services and routes. If you see `throw new RuntimeException(...)` or `throw new Error(...)`, this is a violation. Only the `AppError` typed hierarchy is permitted[cite: 1].
-4. **Read-Only Reports:** The `reports` module must not contain any `save()`, `update()`, or `delete()` operations affecting the `activities`, `programmes`, or `staff` domains[cite: 1].
+### Step 2: Apply the LLM-assessed gates
+A green build has already settled module boundaries, cycles, layer separation, read-only `reports`
+and raw throws — deterministically, by the rules above. Do not re-audit them by eye. Your judgement
+goes on what no rule can see, listed in `evaluation-criteria` §2–§4 and detailed in `how-to-review`:
+
+1. **A required event was never published** — import analysis cannot detect an absence.
+2. **Event wiring that fails silently** — publisher not `@Transactional`, listener missing
+   `@TransactionalEventListener(AFTER_COMMIT)` or `@Transactional(REQUIRES_NEW)`, `ErrorHandler` bean
+   dropped from `EventBusConfiguration`.
+3. **Business logic in a route** — enum conditionals, SLA arithmetic, transition validation or
+   partial-failure aggregation in a `@RestController`.
+4. **Criteria covered only by a status-code assertion**, and absence assertions with no positive
+   counterpart.
+5. **A dropped acceptance criterion** — a FAIL even when `generator-summary.md` declares it a known
+   gap.
 
 ## 3. Structured Output Format
-You must write your final review to `.harness/output/evaluator-feedback.md`.
+Write the review to `.harness/output/evaluator-feedback.md` in this structure:
 
-Your output must follow this exact structure:
-1. **VERDICT:** [PASS | CONDITIONAL PASS | FAIL][cite: 1]
-2. **AUTOMATED CHECKS:** [Pass/Fail] + execution output snippet.
-3. **ARCHITECTURAL CHECKS:** [Pass/Fail] for each of the 4 rules above.
-4. **LINE-LEVEL FEEDBACK:** If FAIL, list the exact file paths, line numbers, and the specific rule violated[cite: 1]. Example: `src/main/java/com/storeops/activities/service/TaskService.java:45 - Direct import of AlertService violates Event Bus hard gate.`
+1. **VERDICT:** PASS | CONDITIONAL PASS | FAIL
+2. **SCORE:** per-dimension and total, e.g. `A 40/40 · B 28/35 · C 20/25 = 88`. The score is for the
+   Monitor's trend log; it never overrides a gate. A sprint can score 88 and FAIL.
+3. **GATE RESULTS:** every gate, pass or fail, with the failing output quoted.
+4. **FINDINGS:** for each, the `file:line`, the rule violated by name, and the change required.
+   Example:
+   `src/main/java/com/cognizant/storeops/activities/service/TaskService.java:112 — Cross-module writes via event bus only (architecture-principles §3). Drop the injected NotificationService; publish TaskStatusChangedEvent instead.`
 
 ## 4. Fallback Rule
-If your own output is ambiguous, or if you cannot determine if a rule was violated, default to **FAIL** and cite "Ambiguous compliance with architectural standards."
+If you cannot determine whether a gate was violated, return **FAIL** and state exactly what you could
+not establish. Never resolve doubt in the Generator's favour.

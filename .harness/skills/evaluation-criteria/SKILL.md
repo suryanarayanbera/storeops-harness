@@ -1,46 +1,107 @@
-# StoreOps Evaluation Criteria & Definition of Done
+# StoreOps Evaluation Criteria
 
-**Purpose:** This document defines the strict rubric for the Evaluator agent. You must use these criteria to assess the Generator's output and determine whether a sprint contract passes or fails. Leniency is prohibited.
+The rubric the Evaluator scores against. The review *method* — order of work, detection, feedback
+shape — is in [how-to-review](../how-to-review/SKILL.md).
 
-## 1. The Definition of Done
-A feature or sprint is only considered "Done" when it meets ALL of the following criteria:
-1. It perfectly satisfies the GIVEN/WHEN/THEN acceptance criteria defined in the sprint contract.
-2. The Maven build succeeds with a `0` exit code (compilation, tests, and static analysis).
-3. It incurs zero violations of the StoreOps Architecture Principles.
+Two separate outputs come out of a review, and confusing them is how leniency gets in:
 
-## 2. Dimension A: Automated Hard Gates (Execution)
-The Evaluator must run the following command to verify the codebase:
-`./mvnw clean test checkstyle:check spotbugs:check`
+- **The verdict** is decided by hard gates alone. Every gate is binary, and the same check results
+  always produce the same verdict. Weights never soften a gate.
+- **The score** is the weighted sum below, recorded in the run log so the Monitor can see quality
+  drift across sprints. A sprint can score 88 and still FAIL.
 
-* **Binary Rule:** If the exit code is not `0`, the evaluation is an automatic **FAIL**.
-* You must not attempt to fix or interpret the build failure. Pass the raw error output back to the Generator.
+## 1. Dimensions
 
-## 3. Dimension B: Architectural Hard Gates (Static Review)
-You must statically analyze the files modified by the Generator against the following criteria. A violation of any of these is an automatic **FAIL**.
+| # | Dimension | Weight | Automated hard gate |
+| --- | --- | --- | --- |
+| A | Contract fulfilment | 40% | `./mvnw clean test` — JUnit, exit 0 |
+| B | Architectural compliance | 35% | `ModuleBoundaryTest` (12 ArchUnit rules) + Checkstyle `IllegalThrows` / `NoRawErrorThrows` / `IllegalCatch` |
+| C | Test quality | 25% | `jacoco:check` — bundle line ≥ 85%, branch ≥ 60%; per-class line ≥ 70%, branch ≥ 50% on services and listeners |
 
-### A. Layer & Database Isolation
-* **Controllers (`@RestController`):** Must contain exactly zero calls to any `@Repository` or JPA EntityManager. They must only delegate to `@Service` classes.
-* **Repositories (`@Repository`):** Must only contain Spring Data JPA interfaces or implementations. They must never import classes from outside their own module's package tree (e.g., `com.storeops.activities.repository` cannot import `com.storeops.staff.entity.StaffMember`). Cross-module SQL joins are strictly forbidden.
-* **Services (`@Service`):** Must be annotated with `@Transactional` where state mutations occur. 
+100% total. All three gates run inside `./mvnw clean test`, so one command settles the automated half
+of every dimension. A non-zero exit is a FAIL before any judgement is applied.
 
-### B. Event-Driven Boundaries
-* **Verification:** If a Service in Module A mutates state and requires Module B to act, Module A *must not* have Module B's Service injected.
-* **Requirement:** Look for `ApplicationEventPublisher`. Module A must publish an event, and Module B must use `@EventListener` to react.
+Weights follow consequence. A sprint that doesn't deliver its contract is worthless whatever its
+shape, so A leads. B is why the harness exists — it is the four failure modes the standards team
+blocked the rollout over. C is last but material, because a passing suite that asserts nothing is how
+those failure modes reached `main` in the first place.
 
-### C. The Error Handling Contract
-* **Verification:** Scan modified files for the `throw` keyword.
-* **Requirement:** Throwing `RuntimeException`, `Exception`, `Error`, or Spring's raw `DataAccessException` is strictly forbidden. All thrown exceptions must extend the `AppError` base class.
+## 2. Dimension A — Contract fulfilment (40%)
 
-## 4. Contract Verification (GIVEN/WHEN/THEN)
-The sprint contract provides acceptance criteria in the GIVEN/WHEN/THEN format. 
-* You must verify that the corresponding JUnit 5 test classes actively mock or simulate the `GIVEN` state, execute the `WHEN` trigger via `MockMvc` or direct service call, and assert the `THEN` outcome.
-* If tests were not written or updated to cover the new contract, issue a **FAIL**.
+Hard gates:
 
-## 5. Verdict Matrix & Output Rules
-Your final output must declare one of the following verdicts:
+- `./mvnw clean test` exits 0. Compilation, all tests, every other gate below.
+- Every acceptance criterion in the sprint contract has at least one test asserting its THEN.
+- No acceptance criterion is silently dropped. A criterion the Generator chose not to implement is a
+  FAIL even if `generator-summary.md` declares it as a known gap.
 
-* **PASS:** All automated checks pass, all architectural hard gates are respected, and tests cover the contract.
-* **CONDITIONAL PASS:** Code is functionally and structurally correct, but requires minor non-breaking cleanups (e.g., removing an unused private method). You must list the required cleanups.
-* **FAIL:** Any automated check fails, any architectural gate is violated, or tests are missing/failing.
+Scored below the gates: whether the implementation matches the criterion's *intent*, error codes are
+the ones the contract named, and edge cases the contract specified (partial failure, idempotency) are
+handled as written.
 
-**On FAIL:** You must provide exact file paths, line numbers, and the specific violated rule from this document or the `architecture-principles` document so the Generator can apply a precise fix.
+## 3. Dimension B — Architectural compliance (35%)
+
+`ModuleBoundaryTest` is the project's dependency analyser and it is authoritative. A green build has
+already proved, deterministically:
+
+| Constraint | Rules |
+| --- | --- |
+| No cross-module repository imports | `noCrossModuleRepositoryImports`, `repositoriesAreReachedOnlyFromServices` |
+| No circular module dependencies | `modulesAreFreeOfCycles` |
+| Cross-module effects via the event bus | `sideEffectsCrossBoundariesOnlyViaTheEventBus`, `eventsDoNotLeakModuleTypes` |
+| `reports` writes nothing elsewhere | `reportsReadsThroughServicesOnly`, `reportsTouchesOnlyServiceAndDomainOfOtherModules` |
+| Layer separation | `layersAreRespected`, `repositoriesAreFreeOfHttpConcerns`, `routesDoNotReachRepositories` |
+| No raw throws | `noGenericExceptionsAreThrown`, `everyAppErrorSubtypeLivesInSharedError` |
+
+Checkstyle covers the error contract on the source text, tests included.
+
+The LLM-assessed hard gates are the ones no rule can see:
+
+- **A required event was never published.** If the contract changes state another module must react
+  to and no event is raised, FAIL. Import analysis cannot detect an absence.
+- **Event wiring that fails silently** — publisher not `@Transactional`, listener missing
+  `@TransactionalEventListener(AFTER_COMMIT)` or `@Transactional(REQUIRES_NEW)`, or the
+  `ErrorHandler` bean dropped from `EventBusConfiguration`.
+- **Business logic in a route.** Enum conditionals, SLA arithmetic, status-transition validation or
+  partial-failure aggregation in a `@RestController`. `@Valid` is not business logic.
+
+## 4. Dimension C — Test quality (25%)
+
+This dimension exists for one failure mode: tests that assert HTTP status codes and verify no
+business rule.
+
+Hard gates:
+
+- `jacoco:check` passes. Thresholds are a ratchet at the current baseline, so new untested code
+  fails the build even when the project average stays healthy.
+- Every new or changed service method has a negative case: the rejected payload, the unknown id, the
+  forbidden transition.
+- No acceptance criterion is covered *only* by a status-code assertion. The test must assert the
+  observable outcome — persisted state, the published event and its payload, or the error `code`.
+- Every absence assertion has a positive counterpart in the same class. `isEmpty()` and
+  `hasSize(before)` both pass when the mechanism under test is entirely broken.
+- New event or listener means a new case in `EventDeliveryIntegrationTest` asserting the side effect
+  happened.
+
+Scored below the gates: whether tests sit at the right layer, and whether `@DisplayName` states the
+rule rather than the method name.
+
+## 5. Verdict rules
+
+Apply in order. Stop at the first that matches.
+
+1. Any automated gate non-zero → **FAIL**.
+2. Any LLM-assessed hard gate in §2–§4 violated → **FAIL**.
+3. All gates pass, and remaining findings cannot change behaviour — a dead private method, a stale
+   comment, a `@DisplayName` that names a method → **CONDITIONAL PASS**, listing each cleanup.
+4. Otherwise → **PASS**.
+
+Two rules keep this deterministic:
+
+- **Ambiguity is a FAIL.** If you cannot establish whether a gate was violated, fail and state
+  exactly what you could not determine. Never resolve doubt in the Generator's favour.
+- **Judge the diff.** Only the files `generator-summary.md` declares are in scope. Baseline gaps are
+  documented in [app-context](../app-context/SKILL.md) §7 and are not this sprint's regression.
+
+Record the verdict, the per-dimension score and every gate result — pass or fail — so the run log
+shows which gate caught what, and which dimension is trending down.

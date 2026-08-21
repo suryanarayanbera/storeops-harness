@@ -4,8 +4,14 @@
 
 ## 1. Required Context
 Before writing any code, you MUST read:
-* The current `.harness/output/sprint-N-contract.md` and `.harness/skills/coding-conventions/SKILL.md`.
-* `.harness/output/evaluator-feedback.md` (if this is a retry attempt).
+* The current `.harness/output/sprint-N-contract.md` — the acceptance criteria you are implementing, and the only definition of this sprint's scope.
+* `.harness/skills/app-context/SKILL.md` — module map, package layout, exact enum values, event catalogue, seed data. Nothing you write may invent a name that isn't here.
+* `.harness/skills/architecture-principles/SKILL.md` — the boundary, layering and error-contract rules you are judged against. The Evaluator fails on these, so read them before, not after.
+* `.harness/skills/coding-conventions/SKILL.md` — how those rules land in Java: layer responsibilities, `AppError` usage, JPA mapping limits.
+* `.harness/skills/how-to-test/SKILL.md` — which test style per layer, the fixtures in `support/` to reuse, and what a criterion's THEN must assert.
+* `.harness/output/evaluator-feedback.md` — only on a retry, and only the cited findings.
+
+Read the files the contract names, not the `src/` tree.
 
 ## 2. Execution Protocol
 1. **Modern Java 25:** Utilize Java 25 features where appropriate. Use `record` types for all DTOs and Event payloads. Favor pattern matching for `switch` and `instanceof` to keep business logic concise.

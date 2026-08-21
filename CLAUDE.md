@@ -31,20 +31,24 @@ Claude Code must strictly adhere to the following state machine:
 2. It writes a structured verdict to `.harness/output/evaluator-feedback.md`.
 
 ### State 4: Routing & Feedback Loop
+The **Monitor** runs after **every** verdict, before any routing decision. A FAIL that is never recorded is a lost quality signal — iteration counts and repeat rule violations are the data that shows which skill file needs work.
+
 Read the verdict in `evaluator-feedback.md`:
-* **If PASS:** The **Monitor** agent archives the sprint artifacts to `.harness/reviews/`. Advance to the next sprint. If no sprints remain, output a success message and HALT.
-* **If FAIL:** Pass `evaluator-feedback.md` back to the **Generator** for a retry. Increment the iteration counter.
+* **If PASS or CONDITIONAL PASS:** Monitor writes `sprint-N-run-log.md`, archives the sprint artefacts to `.harness/reviews/`, and clears context. Advance to the next sprint. If no sprints remain, output a success message and HALT.
+* **If FAIL, iterations remaining:** Monitor appends an iteration entry to the run log. Pass `evaluator-feedback.md` back to the **Generator** for a retry. Increment the iteration counter. Nothing is archived; the sprint is still open.
+* **If FAIL on the 3rd iteration:** escalate, per Section 4.
 
 ## 4. Escalation Limits
 * **Maximum Iterations:** A single sprint loop (Generator -> Evaluator) may only run a maximum of **3 times**.
 * **Escalation Trigger:** If the Evaluator returns FAIL on the 3rd iteration, **HALT EXECUTION**.
-* **Escalation Output:** Write a failure notice to `.harness/output/escalation.md` detailing the sprint name, the iteration count, and the specific blocking issue. 
+* **Escalation Output:** Write a failure notice to `.harness/output/escalation.md` detailing the sprint name, the iteration count, and the specific blocking issue.
+* **Escalation Recording:** The Monitor then closes the sprint as escalated — run log with the escalation flag set, and `escalation.md` archived to `.harness/reviews/`. `.harness/output/` is gitignored, so an escalation left there survives nowhere. Do not advance to the next sprint; a human decides.
 
 ## 5. Context Scoping Strategy
 To prevent context window degradation and LLM hallucination over long runs:
 * Do not load the entire `src/` tree into context at once.
 * The Generator should only read files explicitly relevant to the current sprint contract.
-* Clear conversational context memory after a sprint successfully reaches a PASS verdict and is archived by the Monitor.
+* Clear conversational context memory when the Monitor closes a sprint — on PASS, CONDITIONAL PASS, or escalation. Not on a mid-loop FAIL: the Generator's retry needs the Evaluator's findings still in context.
 
 ## 6. CI/CD Relationship
 * This harness is a **pre-commit governance layer**. 
