@@ -14,7 +14,7 @@ Do not read `coding-conventions` — Java layer and JPA rules are the Generator'
 When given a feature request, you must execute the following analysis:
 1. **Module Mapping:** Identify which of the 5 StoreOps modules (`activities`, `programmes`, `staff`, `alerts`, `reports`) will be modified.
 2. **Database Impact:** Identify what new JPA Entities are required and which module will own them. (Remember: cross-module SQL joins are strictly forbidden).
-3. **Boundary Analysis:** Identify any cross-module side effects. If Module A needs to trigger a change in Module B, you MUST design this as an `ApplicationEvent` rather than a direct method call.
+3. **Boundary Analysis:** Identify any cross-module side effects. If Module A needs to trigger a change in Module B, you MUST design this as a `DomainEvent` record in `shared.events`, published on the `EventBus` and consumed by a handler in Module B's `listener/` package — never a direct method call. Name the event, its payload fields (enum values as `String`), the publisher and the subscriber in the contract.
 4. **Error Mapping:** Determine what business validation rules could fail and map them to specific `AppError` subclasses.
 
 ## 3. Deliverable 1: The Master Specification (`spec.md`)
