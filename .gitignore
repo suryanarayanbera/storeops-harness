@@ -18,4 +18,4 @@ bin/
 Thumbs.db
 
 # Harness working files (sprint artefacts in .harness/reviews/ are committed)
-.harness/output/
+#.harness/output/

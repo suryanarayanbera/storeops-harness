@@ -4,7 +4,7 @@
 
 ## 1. Required Context
 Before planning any work, you MUST read and absorb the following:
-* `.harness/skills/app-context/SKILL.md` — the module map, exact enum values, event catalogue and seed ids. Your GIVEN states must name real data (`task-001`, `user-004`) and your criteria must use vocabulary that already exists.
+* `.harness/skills/app-context/SKILL.md` — the module map, exact enum values, event catalogue and seed ids. Every id and enum value you write must come from here.
 * `.harness/skills/architecture-principles/SKILL.md` — the boundary and layering constraints your sprint guardrails cite.
 * `.harness/skills/sprint-decomposition/SKILL.md` — where to draw sprint boundaries and how to write a criterion the Evaluator can settle.
 
@@ -12,10 +12,10 @@ Do not read `coding-conventions` — Java layer and JPA rules are the Generator'
 
 ## 2. Planning Process
 When given a feature request, you must execute the following analysis:
-1. **Module Mapping:** Identify which of the 5 StoreOps modules (`activities`, `programmes`, `staff`, `alerts`, `reports`) will be modified.
-2. **Database Impact:** Identify what new JPA Entities are required and which module will own them. (Remember: cross-module SQL joins are strictly forbidden).
-3. **Boundary Analysis:** Identify any cross-module side effects. If Module A needs to trigger a change in Module B, you MUST design this as a `DomainEvent` record in `shared.events`, published on the `EventBus` and consumed by a handler in Module B's `listener/` package — never a direct method call. Name the event, its payload fields (enum values as `String`), the publisher and the subscriber in the contract.
-4. **Error Mapping:** Determine what business validation rules could fail and map them to specific `AppError` subclasses.
+1. **Module Mapping:** Name which modules this feature modifies.
+2. **Database Impact:** Name any new JPA Entities and which module owns each one.
+3. **Boundary Analysis:** Find every cross-module side effect and design it as an event, per `architecture-principles`. For each one, the contract must name four things: the event, its payload fields (enum values carried as `String`), the publisher and the subscriber. Leaving any of the four unnamed forces the Generator to guess.
+4. **Error Mapping:** List every business validation rule that could fail and assign each a specific `AppError` subtype and `code` string. Anything you leave unmapped surfaces as a 500.
 
 ## 3. Deliverable 1: The Master Specification (`spec.md`)
 You must output a high-level design document to `.harness/output/spec.md`. It must contain:
@@ -29,7 +29,7 @@ You must output a high-level design document to `.harness/output/spec.md`. It mu
 ## 4. Deliverable 2: Sprint Contracts (`sprint-N-contract.md`)
 For each sprint identified in the specification, you must create a separate file in `.harness/output/` named `sprint-1-contract.md`, `sprint-2-contract.md`, etc.
 
-Each sprint contract must contain specific, testable acceptance criteria using the GIVEN/WHEN/THEN format. 
+Write the criteria to the standard set out in `sprint-decomposition`. This is the file layout:
 
 **Contract Format Template:**
 ```text
@@ -48,4 +48,5 @@ Each sprint contract must contain specific, testable acceptance criteria using t
 * **AND** [Any secondary effects, like an event being published]
 
 ## Architectural Guardrails
-* [Explicit reminder of any boundaries relevant to this sprint, e.g., "Must not inject AlertService; use Event Bus instead."]
+* [Only the boundary this sprint could plausibly break, with the reason — e.g. "Must not inject AlertService into TaskService; the alert comes from an event."]
+```

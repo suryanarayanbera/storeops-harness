@@ -1,107 +1,36 @@
-# StoreOps Evaluation Criteria
+# Skill: Evaluation Criteria
 
-The rubric the Evaluator scores against. The review *method* — order of work, detection, feedback
-shape — is in [how-to-review](../how-to-review/SKILL.md).
+**Goal:** This is how we score sprints. The rules are binary: you either pass or fail.
 
-Two separate outputs come out of a review, and confusing them is how leniency gets in:
+## 1. How We Grade
+Every sprint is scored out of 100, but one failed "hard gate" means an automatic **FAIL** for the whole sprint.
+* **A. Contract Fulfillment (40%):** Does the code do what the sprint asked? (Automated gate: `./mvnw clean test` must pass).
+* **B. Architectural Compliance (35%):** Are the layer rules respected? (Automated gate: `ModuleBoundaryTest` and `Checkstyle`).
+* **C. Test Quality (25%):** Do the tests actually prove anything? (Automated gate: `jacoco:check` for test coverage).
 
-- **The verdict** is decided by hard gates alone. Every gate is binary, and the same check results
-  always produce the same verdict. Weights never soften a gate.
-- **The score** is the weighted sum below, recorded in the run log so the Monitor can see quality
-  drift across sprints. A sprint can score 88 and still FAIL.
+## 2. Dimension A: Contract Fulfillment
+* **Hard Gate:** Every single Acceptance Criteria (AC) from the sprint contract must have a test proving it works. 
+* **Hard Gate:** If a criterion is ignored, the sprint fails, even if the Generator admits to skipping it in the summary.
 
-## 1. Dimensions
+## 3. Dimension B: Architecture
+`ModuleBoundaryTest` automatically checks for cross-module database joins, circular dependencies, and layer violations. 
 
-| # | Dimension | Weight | Automated hard gate |
-| --- | --- | --- | --- |
-| A | Contract fulfilment | 40% | `./mvnw clean test` — JUnit, exit 0 |
-| B | Architectural compliance | 35% | `ModuleBoundaryTest` (12 ArchUnit rules) + Checkstyle `IllegalThrows` / `NoRawErrorThrows` / `IllegalCatch` |
-| C | Test quality | 25% | `jacoco:check` — bundle line ≥ 85%, branch ≥ 60%; per-class line ≥ 70%, branch ≥ 50% on services and listeners |
+**Manual Hard Gates:**
+* **Missing Events:** If the contract says to publish an event and the code doesn't, FAIL.
+* **Silent Failures:** If an event is published without `@Transactional`, or if a listener is missing `@Transactional(REQUIRES_NEW)`, FAIL.
+* **Logic in Routes:** If there is business logic (like doing math or checking enums) inside a Controller, FAIL.
 
-100% total. All three gates run inside `./mvnw clean test`, so one command settles the automated half
-of every dimension. A non-zero exit is a FAIL before any judgement is applied.
+## 4. Dimension C: Test Quality
+We don't accept tests that only check for a `200 OK` status without verifying the data.
 
-Weights follow consequence. A sprint that doesn't deliver its contract is worthless whatever its
-shape, so A leads. B is why the harness exists — it is the four failure modes the standards team
-blocked the rollout over. C is last but material, because a passing suite that asserts nothing is how
-those failure modes reached `main` in the first place.
+**Manual Hard Gates:**
+* **Negative Tests:** Every new service method must have a test for what happens when it fails (e.g., bad payload, wrong ID).
+* **Verify Everything:** Tests must assert the database state, the published event, and the specific error code.
+* **Event Delivery:** New events must include an `EventDeliveryIntegrationTest` to prove the subscriber received it.
 
-## 2. Dimension A — Contract fulfilment (40%)
-
-Hard gates:
-
-- `./mvnw clean test` exits 0. Compilation, all tests, every other gate below.
-- Every acceptance criterion in the sprint contract has at least one test asserting its THEN.
-- No acceptance criterion is silently dropped. A criterion the Generator chose not to implement is a
-  FAIL even if `generator-summary.md` declares it as a known gap.
-
-Scored below the gates: whether the implementation matches the criterion's *intent*, error codes are
-the ones the contract named, and edge cases the contract specified (partial failure, idempotency) are
-handled as written.
-
-## 3. Dimension B — Architectural compliance (35%)
-
-`ModuleBoundaryTest` is the project's dependency analyser and it is authoritative. A green build has
-already proved, deterministically:
-
-| Constraint | Rules |
-| --- | --- |
-| No cross-module repository imports | `noCrossModuleRepositoryImports`, `repositoriesAreReachedOnlyFromServices` |
-| No circular module dependencies | `modulesAreFreeOfCycles` |
-| Cross-module effects via the event bus | `sideEffectsCrossBoundariesOnlyViaTheEventBus`, `eventsDoNotLeakModuleTypes` |
-| `reports` writes nothing elsewhere | `reportsReadsThroughServicesOnly`, `reportsTouchesOnlyServiceAndDomainOfOtherModules` |
-| Layer separation | `layersAreRespected`, `repositoriesAreFreeOfHttpConcerns`, `routesDoNotReachRepositories` |
-| No raw throws | `noGenericExceptionsAreThrown`, `everyAppErrorSubtypeLivesInSharedError` |
-
-Checkstyle covers the error contract on the source text, tests included.
-
-The LLM-assessed hard gates are the ones no rule can see:
-
-- **A required event was never published.** If the contract changes state another module must react
-  to and no event is raised, FAIL. Import analysis cannot detect an absence.
-- **Event wiring that fails silently** — publisher not `@Transactional`, listener missing
-  `@TransactionalEventListener(AFTER_COMMIT)` or `@Transactional(REQUIRES_NEW)`, or the
-  `ErrorHandler` bean dropped from `EventBusConfiguration`.
-- **Business logic in a route.** Enum conditionals, SLA arithmetic, status-transition validation or
-  partial-failure aggregation in a `@RestController`. `@Valid` is not business logic.
-
-## 4. Dimension C — Test quality (25%)
-
-This dimension exists for one failure mode: tests that assert HTTP status codes and verify no
-business rule.
-
-Hard gates:
-
-- `jacoco:check` passes. Thresholds are a ratchet at the current baseline, so new untested code
-  fails the build even when the project average stays healthy.
-- Every new or changed service method has a negative case: the rejected payload, the unknown id, the
-  forbidden transition.
-- No acceptance criterion is covered *only* by a status-code assertion. The test must assert the
-  observable outcome — persisted state, the published event and its payload, or the error `code`.
-- Every absence assertion has a positive counterpart in the same class. `isEmpty()` and
-  `hasSize(before)` both pass when the mechanism under test is entirely broken.
-- New event or listener means a new case in `EventDeliveryIntegrationTest` asserting the side effect
-  happened.
-
-Scored below the gates: whether tests sit at the right layer, and whether `@DisplayName` states the
-rule rather than the method name.
-
-## 5. Verdict rules
-
-Apply in order. Stop at the first that matches.
-
-1. Any automated gate non-zero → **FAIL**.
-2. Any LLM-assessed hard gate in §2–§4 violated → **FAIL**.
-3. All gates pass, and remaining findings cannot change behaviour — a dead private method, a stale
-   comment, a `@DisplayName` that names a method → **CONDITIONAL PASS**, listing each cleanup.
-4. Otherwise → **PASS**.
-
-Two rules keep this deterministic:
-
-- **Ambiguity is a FAIL.** If you cannot establish whether a gate was violated, fail and state
-  exactly what you could not determine. Never resolve doubt in the Generator's favour.
-- **Judge the diff.** Only the files `generator-summary.md` declares are in scope. Baseline gaps are
-  documented in [app-context](../app-context/SKILL.md) §7 and are not this sprint's regression.
-
-Record the verdict, the per-dimension score and every gate result — pass or fail — so the run log
-shows which gate caught what, and which dimension is trending down.
+## 5. The Final Verdict
+1. Did any automated gate fail? **FAIL.**
+2. Did any manual hard gate fail? **FAIL.**
+3. If you can't tell if a gate passed or failed, don't guess. **FAIL.**
+4. If everything passes but there are tiny issues (like a dead private method), issue a **CONDITIONAL PASS** and list the cleanups.
+5. Otherwise, **PASS.**
