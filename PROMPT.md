@@ -16,10 +16,3 @@ per-task success and failure.
 Every successful update raises TaskStatusChangedEvent, exactly as the
 existing single-task update path does.
 ```
-
-## Notes
-
-- Route base is `/api/tasks`, not `/api/activities` — `TaskRoutes` already owns
-  `@RequestMapping("/api/tasks")`, and one controller keeps one base path.
-  See [app-context](.harness/skills/app-context/SKILL.md) §7 on the naming split.
-- Single module (`activities`), so this is expected to decompose into one sprint.
