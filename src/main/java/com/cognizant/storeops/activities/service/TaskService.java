@@ -4,9 +4,15 @@ import com.cognizant.storeops.activities.domain.Task;
 import com.cognizant.storeops.activities.domain.TaskCategory;
 import com.cognizant.storeops.activities.domain.TaskPriority;
 import com.cognizant.storeops.activities.domain.TaskStatus;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateFailure;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateItem;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateRequest;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateResponse;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateSuccess;
 import com.cognizant.storeops.activities.dto.CreateTaskRequest;
 import com.cognizant.storeops.activities.dto.UpdateTaskRequest;
 import com.cognizant.storeops.activities.repository.TaskRepository;
+import com.cognizant.storeops.shared.error.AppError;
 import com.cognizant.storeops.shared.error.ConflictError;
 import com.cognizant.storeops.shared.error.NotFoundError;
 import com.cognizant.storeops.shared.error.ValidationError;
@@ -16,7 +22,10 @@ import com.cognizant.storeops.shared.events.TaskStatusChangedEvent;
 import com.cognizant.storeops.staff.service.UserService;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +44,12 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 public class TaskService {
+
+    /**
+     * The only statuses a handover batch may set. A handover closes work down or hands a blockage on;
+     * reopening or starting work is a single-activity decision and stays on {@code PATCH /{id}}.
+     */
+    private static final Set<TaskStatus> BULK_TARGET_STATUSES = Set.of(TaskStatus.DONE, TaskStatus.BLOCKED);
 
     private final TaskRepository taskRepository;
     private final UserService userService;
@@ -147,6 +162,80 @@ public class TaskService {
                     now));
         }
         return saved;
+    }
+
+    /**
+     * Applies a shift handover batch: each entry is settled on its own, and the report says which
+     * ones took and which ones did not. An unknown id or a refused transition fails that entry only.
+     *
+     * <p>Every entry whose status actually moves publishes {@link TaskStatusChangedEvent}, exactly as
+     * {@link #update} does. Entries that fail, and entries already holding the requested status,
+     * publish nothing.
+     *
+     * <p>Transactional for the same reason {@link #update} is - the events are dispatched after this
+     * transaction commits, and with no transaction to commit no subscriber would ever run. One
+     * transaction spans the whole batch, so partial failure must be expressed by catching
+     * {@link AppError} from a plain helper rather than by letting one escape: see
+     * {@link #applyHandoverEntry}.
+     */
+    @Transactional
+    public BulkStatusUpdateResponse bulkUpdateStatus(final BulkStatusUpdateRequest request) {
+        final List<BulkStatusUpdateSuccess> succeeded = new ArrayList<>();
+        final List<BulkStatusUpdateFailure> failed = new ArrayList<>();
+        final Set<String> applied = new HashSet<>();
+
+        for (final BulkStatusUpdateItem entry : request.updates()) {
+            try {
+                succeeded.add(applyHandoverEntry(entry, applied));
+            } catch (final AppError error) {
+                failed.add(BulkStatusUpdateFailure.from(entry.taskId(), error));
+            }
+        }
+        return new BulkStatusUpdateResponse(succeeded, failed);
+    }
+
+    /**
+     * Settles one entry of a handover batch, or throws describing why it could not be settled.
+     *
+     * <p>Deliberately a plain private method. It must <em>not</em> be annotated {@code @Transactional}
+     * and the batch must <em>not</em> reach it by calling the public {@link #update} instead: either
+     * route puts a transaction boundary between the loop and the failure, so a rejected entry marks
+     * the batch transaction rollback-only and the whole handover is then lost to an
+     * {@code UnexpectedRollbackException} at commit - after the report has already claimed success for
+     * its neighbours. Thrown here and caught in the loop, a rejection costs nothing but its own entry.
+     *
+     * @param applied ids already settled by this batch, so a repeated id cannot be applied twice
+     */
+    private BulkStatusUpdateSuccess applyHandoverEntry(
+            final BulkStatusUpdateItem entry, final Set<String> applied) {
+        if (!BULK_TARGET_STATUSES.contains(entry.status())) {
+            throw new ValidationError(
+                    "A handover batch can only set DONE or BLOCKED",
+                    List.of("status: '" + entry.status() + "' is not a handover target status"));
+        }
+        if (!applied.add(entry.taskId())) {
+            throw new ValidationError(
+                    "Activity '" + entry.taskId() + "' appears more than once in this batch",
+                    List.of("taskId: duplicate entry for '" + entry.taskId() + "'"));
+        }
+
+        final Task existing = getById(entry.taskId());
+        if (existing.status() == entry.status()) {
+            return BulkStatusUpdateSuccess.unchanged(existing);
+        }
+        requireTransitionAllowed(existing.status(), entry.status());
+
+        final Instant now = clock.instant();
+        final Task saved = taskRepository.save(existing.withStatus(entry.status(), now));
+        eventBus.publish(new TaskStatusChangedEvent(
+                saved.id(),
+                saved.storeId(),
+                existing.status().name(),
+                saved.status().name(),
+                saved.priority().name(),
+                saved.assigneeId(),
+                now));
+        return BulkStatusUpdateSuccess.changed(existing, saved);
     }
 
     /** Read-only view for the programmes and reports modules. */

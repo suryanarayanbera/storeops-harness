@@ -3,6 +3,8 @@ package com.cognizant.storeops.activities.routes;
 import com.cognizant.storeops.activities.domain.TaskCategory;
 import com.cognizant.storeops.activities.domain.TaskPriority;
 import com.cognizant.storeops.activities.domain.TaskStatus;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateRequest;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateResponse;
 import com.cognizant.storeops.activities.dto.CreateTaskRequest;
 import com.cognizant.storeops.activities.dto.TaskResponse;
 import com.cognizant.storeops.activities.dto.UpdateTaskRequest;
@@ -10,6 +12,7 @@ import com.cognizant.storeops.activities.service.TaskService;
 import jakarta.validation.Valid;
 import java.net.URI;
 import java.util.List;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -69,5 +72,23 @@ public class TaskRoutes {
             @PathVariable final String id,
             @Valid @RequestBody final UpdateTaskRequest request) {
         return ResponseEntity.ok(TaskResponse.from(taskService.update(id, request)));
+    }
+
+    /**
+     * Endpoint 5: {@code PATCH /api/tasks/bulk-status}. Shift handover - each activity in the batch
+     * succeeds or fails alone.
+     *
+     * <p>Always {@code 207 Multi-Status}, including for an all-success or an all-failure batch: the
+     * per-activity report is the answer either way, and one endpoint reporting one status is easier to
+     * consume than a status that shifts with the contents of the body. A malformed batch is still
+     * rejected whole, by bean validation, with the usual {@code 400}.
+     *
+     * <p>The literal {@code bulk-status} segment outranks the {@code /{id}} pattern in Spring's path
+     * comparator, so this handler is reached and no ambiguous mapping is registered.
+     */
+    @PatchMapping("/bulk-status")
+    public ResponseEntity<BulkStatusUpdateResponse> bulkUpdateStatus(
+            @Valid @RequestBody final BulkStatusUpdateRequest request) {
+        return ResponseEntity.status(HttpStatus.MULTI_STATUS).body(taskService.bulkUpdateStatus(request));
     }
 }

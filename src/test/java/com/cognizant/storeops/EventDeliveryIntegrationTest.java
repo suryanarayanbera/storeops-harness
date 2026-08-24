@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 
 import com.cognizant.storeops.activities.domain.Task;
 import com.cognizant.storeops.activities.domain.TaskStatus;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateItem;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateRequest;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateResponse;
 import com.cognizant.storeops.activities.dto.CreateTaskRequest;
 import com.cognizant.storeops.activities.dto.UpdateTaskRequest;
 import com.cognizant.storeops.activities.service.TaskService;
@@ -84,6 +87,30 @@ class EventDeliveryIntegrationTest {
         assertThat(after).hasSize(before + 1);
         assertThat(after.getFirst().alertType()).isEqualTo(AlertType.ESCALATION);
         assertThat(after.getFirst().sourceRef()).isEqualTo(task.id());
+    }
+
+    @Test
+    @DisplayName("a handover batch delivers one alert per activity it blocked, and none for the rest")
+    void bulkHandoverReachesAlertsModule() {
+        final Task blocked = createTask("Delivery check - batch blocked");
+        final Task closed = createTask("Delivery check - batch closed");
+        final int before = alertsFor("user-004").size();
+
+        final BulkStatusUpdateResponse response = taskService.bulkUpdateStatus(new BulkStatusUpdateRequest(List.of(
+                new BulkStatusUpdateItem(blocked.id(), TaskStatus.BLOCKED),
+                new BulkStatusUpdateItem("task-does-not-exist", TaskStatus.BLOCKED),
+                new BulkStatusUpdateItem(closed.id(), TaskStatus.DONE))));
+
+        assertThat(response.succeeded()).hasSize(2);
+        assertThat(response.failed()).hasSize(1);
+
+        // One alert only: the DONE entry is not alertable and the unknown id never published.
+        final List<Notification> after = alertsFor("user-004");
+        assertThat(after).hasSize(before + 1);
+        assertThat(after).anySatisfy(notification -> {
+            assertThat(notification.sourceRef()).isEqualTo(blocked.id());
+            assertThat(notification.alertType()).isEqualTo(AlertType.ESCALATION);
+        });
     }
 
     @Test

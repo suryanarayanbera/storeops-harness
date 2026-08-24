@@ -9,6 +9,11 @@ import com.cognizant.storeops.activities.domain.Task;
 import com.cognizant.storeops.activities.domain.TaskCategory;
 import com.cognizant.storeops.activities.domain.TaskPriority;
 import com.cognizant.storeops.activities.domain.TaskStatus;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateFailure;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateItem;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateRequest;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateResponse;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateSuccess;
 import com.cognizant.storeops.activities.dto.CreateTaskRequest;
 import com.cognizant.storeops.activities.dto.UpdateTaskRequest;
 import com.cognizant.storeops.shared.error.ConflictError;
@@ -69,8 +74,21 @@ class TaskServiceTest {
     }
 
     private Task seedTask(final String id, final TaskStatus status, final TaskPriority priority, final Instant dueAt) {
+        return seedTask(id, status, priority, dueAt, "user-004");
+    }
+
+    private Task seedTask(final String id, final TaskStatus status, final TaskPriority priority,
+            final Instant dueAt, final String assigneeId) {
         return taskRepository.save(new Task(id, "Seeded " + id, null, status, priority,
-                TaskCategory.RESTOCKING, "store-001", "project-001", "user-004", dueAt, NOW, NOW));
+                TaskCategory.RESTOCKING, "store-001", "project-001", assigneeId, dueAt, NOW, NOW));
+    }
+
+    private TaskStatus storedStatus(final String id) {
+        return taskRepository.findById(id).orElseThrow().status();
+    }
+
+    private static BulkStatusUpdateRequest handover(final BulkStatusUpdateItem... entries) {
+        return new BulkStatusUpdateRequest(List.of(entries));
     }
 
     @Test
@@ -231,5 +249,124 @@ class TaskServiceTest {
         assertThat(taskService.list(TaskStatus.BLOCKED, null, null, null))
                 .extracting(Task::id).containsExactly("task-002");
         assertThat(taskService.list(null, null, null, "store-999")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a handover batch marks every listed activity and publishes one event each")
+    void bulkUpdateAppliesEveryEntry() {
+        seedTask("task-001", TaskStatus.TODO, TaskPriority.HIGH, null, "user-004");
+        seedTask("task-002", TaskStatus.IN_PROGRESS, TaskPriority.MEDIUM, null, "user-003");
+
+        final BulkStatusUpdateResponse response = taskService.bulkUpdateStatus(handover(
+                new BulkStatusUpdateItem("task-001", TaskStatus.DONE),
+                new BulkStatusUpdateItem("task-002", TaskStatus.BLOCKED)));
+
+        assertThat(response.failed()).isEmpty();
+        assertThat(response.succeeded()).containsExactly(
+                new BulkStatusUpdateSuccess("task-001", "TODO", "DONE", true),
+                new BulkStatusUpdateSuccess("task-002", "IN_PROGRESS", "BLOCKED", true));
+        assertThat(storedStatus("task-001")).isEqualTo(TaskStatus.DONE);
+        assertThat(storedStatus("task-002")).isEqualTo(TaskStatus.BLOCKED);
+        assertThat(statusEvents()).containsExactly(
+                new TaskStatusChangedEvent("task-001", "store-001", "TODO", "DONE", "HIGH", "user-004", NOW),
+                new TaskStatusChangedEvent("task-002", "store-001", "IN_PROGRESS", "BLOCKED", "MEDIUM", "user-003", NOW));
+    }
+
+    @Test
+    @DisplayName("a handover batch fails an unknown id without touching the rest")
+    void bulkUpdateIsolatesAnUnknownId() {
+        seedTask("task-001", TaskStatus.TODO, TaskPriority.HIGH, null);
+
+        final BulkStatusUpdateResponse response = taskService.bulkUpdateStatus(handover(
+                new BulkStatusUpdateItem("task-999", TaskStatus.DONE),
+                new BulkStatusUpdateItem("task-001", TaskStatus.DONE)));
+
+        assertThat(response.failed()).containsExactly(
+                new BulkStatusUpdateFailure("task-999", "TASK_NOT_FOUND", "Task 'task-999' was not found", 404));
+        assertThat(response.succeeded()).containsExactly(
+                new BulkStatusUpdateSuccess("task-001", "TODO", "DONE", true));
+        assertThat(storedStatus("task-001")).isEqualTo(TaskStatus.DONE);
+        assertThat(statusEvents()).hasSize(1);
+        assertThat(statusEvents().getFirst().taskId()).isEqualTo("task-001");
+    }
+
+    @Test
+    @DisplayName("a handover batch fails a refused transition without touching the rest")
+    void bulkUpdateIsolatesARefusedTransition() {
+        final Task done = seedTask("task-003", TaskStatus.DONE, TaskPriority.CRITICAL, null);
+        seedTask("task-002", TaskStatus.IN_PROGRESS, TaskPriority.MEDIUM, null);
+
+        final BulkStatusUpdateResponse response = taskService.bulkUpdateStatus(handover(
+                new BulkStatusUpdateItem("task-003", TaskStatus.BLOCKED),
+                new BulkStatusUpdateItem("task-002", TaskStatus.DONE)));
+
+        assertThat(response.failed()).singleElement().satisfies(failure -> {
+            assertThat(failure.taskId()).isEqualTo("task-003");
+            assertThat(failure.code()).isEqualTo("TASK_TRANSITION_NOT_ALLOWED");
+            assertThat(failure.statusCode()).isEqualTo(409);
+        });
+        assertThat(response.succeeded()).containsExactly(
+                new BulkStatusUpdateSuccess("task-002", "IN_PROGRESS", "DONE", true));
+        // Record equality: nothing at all was written for the refused entry, updatedAt included.
+        assertThat(taskRepository.findById("task-003")).contains(done);
+        assertThat(statusEvents()).hasSize(1);
+        assertThat(statusEvents().getFirst().taskId()).isEqualTo("task-002");
+    }
+
+    @Test
+    @DisplayName("a handover batch refuses a status other than DONE or BLOCKED, entry by entry")
+    void bulkUpdateIsolatesAStatusOutsideTheHandoverPair() {
+        seedTask("task-001", TaskStatus.TODO, TaskPriority.HIGH, null);
+        seedTask("task-002", TaskStatus.IN_PROGRESS, TaskPriority.MEDIUM, null);
+
+        final BulkStatusUpdateResponse response = taskService.bulkUpdateStatus(handover(
+                new BulkStatusUpdateItem("task-001", TaskStatus.IN_PROGRESS),
+                new BulkStatusUpdateItem("task-002", TaskStatus.DONE)));
+
+        assertThat(response.failed()).singleElement().satisfies(failure -> {
+            assertThat(failure.taskId()).isEqualTo("task-001");
+            assertThat(failure.code()).isEqualTo("VALIDATION_FAILED");
+            assertThat(failure.statusCode()).isEqualTo(400);
+        });
+        assertThat(response.succeeded()).containsExactly(
+                new BulkStatusUpdateSuccess("task-002", "IN_PROGRESS", "DONE", true));
+        assertThat(storedStatus("task-001")).isEqualTo(TaskStatus.TODO);
+        assertThat(statusEvents()).hasSize(1);
+        assertThat(statusEvents().getFirst().taskId()).isEqualTo("task-002");
+    }
+
+    @Test
+    @DisplayName("a handover batch reports an activity already in the requested status, and publishes nothing")
+    void bulkUpdateReportsAnAlreadySettledActivity() {
+        final Task done = seedTask("task-003", TaskStatus.DONE, TaskPriority.CRITICAL, null);
+
+        final BulkStatusUpdateResponse response = taskService.bulkUpdateStatus(
+                handover(new BulkStatusUpdateItem("task-003", TaskStatus.DONE)));
+
+        assertThat(response.failed()).isEmpty();
+        assertThat(response.succeeded()).containsExactly(
+                new BulkStatusUpdateSuccess("task-003", "DONE", "DONE", false));
+        assertThat(taskRepository.findById("task-003")).contains(done);
+        assertThat(statusEvents()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a handover batch applies a repeated id once and fails the repeat")
+    void bulkUpdateAppliesARepeatedIdOnce() {
+        seedTask("task-001", TaskStatus.TODO, TaskPriority.HIGH, null);
+
+        final BulkStatusUpdateResponse response = taskService.bulkUpdateStatus(handover(
+                new BulkStatusUpdateItem("task-001", TaskStatus.DONE),
+                new BulkStatusUpdateItem("task-001", TaskStatus.BLOCKED)));
+
+        assertThat(response.succeeded()).containsExactly(
+                new BulkStatusUpdateSuccess("task-001", "TODO", "DONE", true));
+        assertThat(response.failed()).singleElement().satisfies(failure -> {
+            assertThat(failure.taskId()).isEqualTo("task-001");
+            assertThat(failure.code()).isEqualTo("VALIDATION_FAILED");
+            assertThat(failure.statusCode()).isEqualTo(400);
+        });
+        assertThat(storedStatus("task-001")).isEqualTo(TaskStatus.DONE);
+        assertThat(statusEvents()).hasSize(1);
     }
 }
