@@ -1,0 +1,12 @@
+target/
+.git/
+.gitignore
+.harness/
+.claude/
+.idea/
+.vscode/
+*.iml
+mvnw.cmd
+README.md
+PROMPT.md
+CLAUDE.md

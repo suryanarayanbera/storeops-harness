@@ -1,7 +1,6 @@
 # Demonstration Run Prompt
 
 The feature prompt used to invoke the harness for the demonstration run.
-Feature source: Case Study §3.4 — "Add shift handover bulk update".
 
 ```text
 @planner Add shift handover bulk update to the activities module.
