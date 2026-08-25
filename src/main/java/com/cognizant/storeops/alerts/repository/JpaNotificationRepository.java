@@ -1,5 +1,6 @@
 package com.cognizant.storeops.alerts.repository;
 
+import com.cognizant.storeops.alerts.domain.AlertType;
 import com.cognizant.storeops.alerts.domain.Notification;
 import com.cognizant.storeops.alerts.domain.NotificationStatus;
 import java.util.List;
@@ -34,6 +35,15 @@ public class JpaNotificationRepository implements NotificationRepository {
     @Override
     public List<Notification> search(final String recipientId, final NotificationStatus status) {
         return toDomain(notifications.search(recipientId, status, NotificationJpaRepository.DEFAULT_SORT));
+    }
+
+    @Override
+    public List<Notification> findBySourceRefAndAlertType(final String sourceRef, final AlertType alertType) {
+        if (sourceRef == null || alertType == null) {
+            return List.of();
+        }
+        return toDomain(notifications.findBySourceRefAndAlertType(
+                sourceRef, alertType, NotificationJpaRepository.OLDEST_FIRST));
     }
 
     private static List<Notification> toDomain(final List<NotificationEntity> entities) {

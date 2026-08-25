@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
 /**
@@ -24,9 +25,18 @@ import org.springframework.test.web.servlet.MockMvc;
  * <p>The first test is the capstone document's own baseline check: {@code GET /api/tasks} must
  * answer 200. The last is the one that matters architecturally - a status change reaching the alerts
  * module through the event bus, with no import between the two modules.
+ *
+ * <p>{@code @DirtiesContext(AFTER_CLASS)} because {@code postProject} creates a programme and there
+ * is no endpoint to remove it. The H2 database lives for the whole JVM
+ * ({@code DB_CLOSE_DELAY=-1}) while Spring caches one context per test configuration, so without
+ * this the extra row leaks into every later class sharing this context and any assertion counting a
+ * mutable table becomes a function of context build order. {@code AFTER_CLASS} rather than
+ * {@code BEFORE_EACH_TEST_METHOD}: one rebuild at the end cleans up for everyone downstream, where
+ * per-method would cost eleven.
  */
-@SpringBootTest
+@SpringBootTest(properties = "storeops.activities.sla.sweep.enabled=false")
 @AutoConfigureMockMvc
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class ApiSmokeTest {
 
     @Autowired

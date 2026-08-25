@@ -51,6 +51,25 @@ spring:
       # (code, message, statusCode, path, timestamp).
       enabled: false
 
+storeops:
+  activities:
+    sla:
+      # Clock-driven SLA breach detection. The sweep restates the fact that an activity is still
+      # overdue on every cycle; the alerts module de-duplicates. Disabled in the integration tests
+      # so a sweep cannot insert notifications mid-test - see SlaSweepScheduler.
+      sweep:
+        enabled: true
+        interval: PT15M
+        # Also 15 minutes so the first sweep cannot fire inside a test run, which is the second half
+        # of the isolation guarantee: the property above is the first.
+        initial-delay: PT15M
+  alerts:
+    sla:
+      # How long a breach may stay unresolved before the store manager is told. Owned by alerts, not
+      # activities: how long anyone has to act on a breach is an alerting policy. Zero is legal and
+      # means "escalate on the next sweep".
+      grace-period: PT4H
+
 logging:
   level:
     root: INFO

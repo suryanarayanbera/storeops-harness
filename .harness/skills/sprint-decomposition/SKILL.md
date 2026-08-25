@@ -21,3 +21,6 @@ The AI Generator needs specific GIVEN/WHEN/THEN criteria to write good JUnit tes
 Every single sprint has to be testable on its own.
 * If your test needs data from a completely different module, don't try to join the databases. 
 * Just instruct the Generator to mock that service or use fake seed data.
+
+## 5. Multiple features
+For each new feature create new starting sprint contract like sprint-1,2,3 etc instead of increamenting sprint count from previous feature.

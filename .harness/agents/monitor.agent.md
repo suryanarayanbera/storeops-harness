@@ -36,6 +36,7 @@ Create this file and write all of the following sections (use `none` if a field 
 3. Keep `spec.md` in `.harness/output/` when a sprint escalates, whichever sprint it is. The run is halted for human intervention, not finished, and the spec is what the human reads to decide what happens next.
 4. Otherwise `.harness/output/` retains only `spec.md` and the contracts for sprints not yet run.
 5. Run `git add .harness/reviews/` to stage the audit trail.
+6. While archiving output files into reviews folder, create new folder for each new feature run started from @planner.
 
 ### Output C: System Directives & Routing
 * **Memory Reset Directive (Sprint Close Only):** Output this exact directive:

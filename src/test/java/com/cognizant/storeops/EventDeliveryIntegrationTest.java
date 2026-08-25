@@ -38,7 +38,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * active, so a missing {@code @Transactional} on a publishing service method would silently stop all
  * alerting while every other test still passed.
  */
-@SpringBootTest
+@SpringBootTest(properties = "storeops.activities.sla.sweep.enabled=false")
 @Import(FailingSubscriber.class)
 class EventDeliveryIntegrationTest {
 

@@ -221,6 +221,85 @@ class TaskServiceTest {
                 .containsExactlyInAnyOrder("task-high", "task-critical");
     }
 
+    /**
+     * The four activities from {@code data.sql}, with their real stores, assignees and due dates.
+     *
+     * <p>Reproduced here rather than approximated because the sweep's behaviour against the shipped
+     * seed is what the integration tests and the curl examples will show: exactly one breach.
+     */
+    private void seedTheFourSeedActivities() {
+        taskRepository.save(new Task("task-001", "Restock aisle 4 beverages", "Weekend promotion overflow",
+                TaskStatus.TODO, TaskPriority.HIGH, TaskCategory.RESTOCKING, "store-001", "project-001",
+                "user-004", Instant.parse("2026-01-07T08:00:00Z"), NOW, NOW));
+        taskRepository.save(new Task("task-002", "Reset seasonal planogram bay 12", "Spring layout rollout",
+                TaskStatus.IN_PROGRESS, TaskPriority.MEDIUM, TaskCategory.PLANOGRAM, "store-001", "project-001",
+                "user-003", Instant.parse("2026-01-08T08:00:00Z"), NOW, NOW));
+        taskRepository.save(new Task("task-003", "Chilled temperature compliance check", "Twice-daily log",
+                TaskStatus.DONE, TaskPriority.CRITICAL, TaskCategory.COMPLIANCE, "store-001", null,
+                "user-003", Instant.parse("2026-01-06T09:00:00Z"), NOW, NOW));
+        taskRepository.save(new Task("task-004", "Stockroom cage audit", "Quarterly shrinkage audit",
+                TaskStatus.BLOCKED, TaskPriority.LOW, TaskCategory.AUDIT, "store-002", "project-002",
+                "user-005", null, NOW, NOW));
+    }
+
+    @Test
+    @DisplayName("the sweep publishes one fully populated TaskOverdueEvent for the single seed breach")
+    void publishOverdueBreachesPopulatesTheEventFromTheSeedData() {
+        seedTheFourSeedActivities();
+
+        assertThat(taskService.publishOverdueBreaches()).isEqualTo(1);
+
+        assertThat(overdueEvents()).hasSize(1);
+        final TaskOverdueEvent event = overdueEvents().getFirst();
+        assertThat(event.taskId()).isEqualTo("task-001");
+        assertThat(event.storeId()).isEqualTo("store-001");
+        assertThat(event.priority()).isEqualTo("HIGH");
+        assertThat(event.assigneeId()).isEqualTo("user-004");
+        assertThat(event.dueAt()).isEqualTo(Instant.parse("2026-01-07T08:00:00Z"));
+        assertThat(event.occurredAt()).isEqualTo(NOW);
+        assertThat(event.eventType()).isEqualTo("TASK_OVERDUE");
+    }
+
+    @Test
+    @DisplayName("the sweep skips MEDIUM priority, DONE activities and activities with no due date")
+    void publishOverdueBreachesSkipsEveryNonBreach() {
+        seedTheFourSeedActivities();
+
+        taskService.publishOverdueBreaches();
+
+        // Asserted one exclusion at a time, so a failure names which filter broke rather than only
+        // reporting that the count moved.
+        assertThat(overdueEvents()).extracting(TaskOverdueEvent::taskId).doesNotContain("task-002");
+        assertThat(overdueEvents()).extracting(TaskOverdueEvent::taskId).doesNotContain("task-003");
+        assertThat(overdueEvents()).extracting(TaskOverdueEvent::taskId).doesNotContain("task-004");
+    }
+
+    @Test
+    @DisplayName("the sweep treats an activity due in the future as no breach at all")
+    void publishOverdueBreachesIgnoresActivitiesNotYetDue() {
+        seedTask("task-future", TaskStatus.TODO, TaskPriority.CRITICAL, Instant.parse("2026-03-01T00:00:00Z"));
+
+        assertThat(taskService.publishOverdueBreaches()).isZero();
+        assertThat(overdueEvents()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the sweep re-publishes on every cycle, because the alerts module de-duplicates")
+    void publishOverdueBreachesRepublishesOnEveryCycle() {
+        seedTheFourSeedActivities();
+
+        // Not a bug. Re-publication is how the alerts module learns an activity is *still*
+        // unresolved, which is what its grace-period escalation is built on. Suppressing the
+        // repeats is the subscriber's job, added in Sprint 4.
+        assertThat(taskService.publishOverdueBreaches()).isEqualTo(1);
+        assertThat(taskService.publishOverdueBreaches()).isEqualTo(1);
+        assertThat(taskService.publishOverdueBreaches()).isEqualTo(1);
+
+        assertThat(overdueEvents()).hasSize(3);
+        assertThat(overdueEvents()).extracting(TaskOverdueEvent::taskId)
+                .containsExactly("task-001", "task-001", "task-001");
+    }
+
     @Test
     @DisplayName("list applies the supplied criteria and ignores the null ones")
     void listAppliesCriteria() {

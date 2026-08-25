@@ -160,12 +160,18 @@ public class TaskService {
     }
 
     /**
-     * Publishes {@link TaskOverdueEvent} for every SLA-tracked activity past its due date.
+     * Publishes {@link TaskOverdueEvent} for every SLA-tracked activity past its due date, and
+     * returns the number of events published.
      *
-     * <p>Stub: nothing schedules this yet. It exists so the SLA breach feature has a seam that
-     * already respects the event-bus rule, and returns the number of events published.
+     * <p>Driven by {@link SlaSweepScheduler} on a fixed delay. Deliberately stateless: it does not
+     * record what it has already reported, so an activity that stays overdue is re-published on
+     * every cycle. That is the signal the alerts module uses to tell "newly breached" from "still
+     * unresolved"; suppressing the repeats is the subscriber's job.
      *
-     * <p>Transactional so the published events reach their after-commit subscribers.
+     * <p>Transactional so the published events reach their after-commit subscribers. Removing the
+     * annotation is invisible to any test using {@code RecordingEventBus}, which records at publish
+     * time, and silently stops every real subscriber: Spring skips after-commit callbacks when no
+     * transaction is active.
      */
     @Transactional
     public int publishOverdueBreaches() {

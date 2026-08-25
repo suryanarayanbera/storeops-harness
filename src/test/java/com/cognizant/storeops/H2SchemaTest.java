@@ -16,7 +16,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * that nothing else checks at compile time. Rename a field or a {@code @Column} and the seed script
  * silently stops matching - this test fails instead.
  */
-@SpringBootTest
+@SpringBootTest(properties = "storeops.activities.sla.sweep.enabled=false")
 class H2SchemaTest {
 
     @Autowired
@@ -64,14 +64,34 @@ class H2SchemaTest {
                 .containsExactlyInAnyOrder("PROJECT_ID", "USER_ID", "ROLE", "JOINED_AT");
     }
 
+    /**
+     * The seed rows named by {@code data.sql}, counted by id.
+     *
+     * <p>Counted by id rather than as a table total because the H2 database is shared for the whole
+     * JVM ({@code DB_CLOSE_DELAY=-1}) while Spring caches one context per distinct test
+     * configuration, so a table total makes this test a function of context build order. The seed ids
+     * do not move.
+     *
+     * <p>{@code ApiSmokeTest} - which posts a programme and cannot remove it - now carries
+     * {@code @DirtiesContext(AFTER_CLASS)}, so the totals would in fact balance today. Kept keyed on
+     * ids anyway: that fix depends on one annotation on one class staying put, while this assertion
+     * holds however many contexts the suite grows.
+     */
     @Test
     @DisplayName("data.sql populated every table it names, and left reports empty")
     void seedDataLoaded() {
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM users", Integer.class)).isEqualTo(5);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM projects", Integer.class)).isEqualTo(2);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM project_members", Integer.class)).isEqualTo(4);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM tasks", Integer.class)).isGreaterThanOrEqualTo(4);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM notifications", Integer.class)).isGreaterThanOrEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM users WHERE id LIKE 'user-00%'", Integer.class)).isEqualTo(5);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM projects WHERE id IN ('project-001', 'project-002')",
+                Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM project_members WHERE project_id IN ('project-001', 'project-002')",
+                Integer.class)).isEqualTo(4);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM tasks WHERE id LIKE 'task-00%'", Integer.class)).isEqualTo(4);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM notifications WHERE id = 'notification-001'", Integer.class)).isEqualTo(1);
     }
 
     @Test

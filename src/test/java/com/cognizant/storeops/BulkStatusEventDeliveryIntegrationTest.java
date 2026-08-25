@@ -36,7 +36,7 @@ import org.springframework.test.web.servlet.ResultActions;
  * whose {@code sourceRef} is {@code task-003}, so every assertion about that recipient filters on
  * {@code alertType} and {@code sourceRef} together. Counting rows would be satisfied by the seed.
  */
-@SpringBootTest
+@SpringBootTest(properties = "storeops.activities.sla.sweep.enabled=false")
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_EACH_TEST_METHOD)
 class BulkStatusEventDeliveryIntegrationTest {

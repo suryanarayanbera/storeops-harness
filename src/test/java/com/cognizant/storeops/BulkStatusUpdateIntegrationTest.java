@@ -30,7 +30,7 @@ import org.springframework.test.web.servlet.ResultActions;
  * others sharing the same in-memory database, so relying on their starting statuses without this
  * would make the suite order-dependent.
  */
-@SpringBootTest
+@SpringBootTest(properties = "storeops.activities.sla.sweep.enabled=false")
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_EACH_TEST_METHOD)
 class BulkStatusUpdateIntegrationTest {

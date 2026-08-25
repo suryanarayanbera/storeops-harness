@@ -31,7 +31,7 @@ import org.springframework.test.web.servlet.MockMvc;
  * failure back to the publisher, and an alerts-module bug would fail an activities-module
  * request - the coupling the event bus exists to prevent.
  */
-@SpringBootTest
+@SpringBootTest(properties = "storeops.activities.sla.sweep.enabled=false")
 @AutoConfigureMockMvc
 @Import(FailingStatusSubscriber.class)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_EACH_TEST_METHOD)

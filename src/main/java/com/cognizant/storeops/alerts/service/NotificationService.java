@@ -50,6 +50,17 @@ public class NotificationService {
     }
 
     /**
+     * Alerts already raised from one source entity, of one type, oldest first.
+     *
+     * <p>The listener's de-duplication read. Kept on the service rather than letting the listener
+     * reach {@code NotificationRepository} directly, which ArchUnit rule 1b forbids: a repository is
+     * reachable from its own module's service layer and nowhere else.
+     */
+    public List<Notification> findBySourceRefAndAlertType(final String sourceRef, final AlertType alertType) {
+        return notificationRepository.findBySourceRefAndAlertType(sourceRef, alertType);
+    }
+
+    /**
      * Raises an in-app alert in PENDING state.
      *
      * <p>Stub: delivery is not implemented, so the alert stays PENDING until {@link #markSent}
