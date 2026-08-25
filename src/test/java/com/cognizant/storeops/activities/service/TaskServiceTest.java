@@ -44,6 +44,9 @@ class TaskServiceTest {
 
     private static final Instant NOW = Instant.parse("2026-02-01T10:00:00Z");
 
+    /** Seed due date of {@code task-001}: past, so the sweep sees it as breached. */
+    private static final Instant DUE_TASK_001 = Instant.parse("2026-01-07T08:00:00Z");
+
     private FakeTaskRepository taskRepository;
     private UserService userService;
     private RecordingEventBus eventBus;
@@ -223,20 +226,48 @@ class TaskServiceTest {
     }
 
     @Test
-    @DisplayName("publishOverdueBreaches emits only for HIGH and CRITICAL activities past due")
-    void publishOverdueBreachesFiltersByPriority() {
-        final Instant past = NOW.minusSeconds(3_600);
-        seedTask("task-high", TaskStatus.TODO, TaskPriority.HIGH, past);
-        seedTask("task-critical", TaskStatus.IN_PROGRESS, TaskPriority.CRITICAL, past);
-        seedTask("task-low", TaskStatus.TODO, TaskPriority.LOW, past);
-        seedTask("task-done", TaskStatus.DONE, TaskPriority.CRITICAL, past);
-        seedTask("task-future", TaskStatus.TODO, TaskPriority.HIGH, NOW.plusSeconds(3_600));
+    @DisplayName("the sweep publishes only for SLA-tracked activities that are past due and unfinished")
+    void publishOverdueBreachesFiltersByPriorityAndStatus() {
+        seedTask("task-001", TaskStatus.TODO, TaskPriority.HIGH, DUE_TASK_001);
+        seedTask("task-002", TaskStatus.IN_PROGRESS, TaskPriority.MEDIUM, Instant.parse("2026-01-08T08:00:00Z"));
+        seedTask("task-003", TaskStatus.DONE, TaskPriority.CRITICAL, Instant.parse("2026-01-06T09:00:00Z"));
+        seedTask("task-004", TaskStatus.BLOCKED, TaskPriority.LOW, null);
 
         final int published = taskService.publishOverdueBreaches();
 
-        assertThat(published).isEqualTo(2);
+        assertThat(published).isEqualTo(1);
+        assertThat(overdueEvents()).singleElement().satisfies(event -> {
+            assertThat(event.taskId()).isEqualTo("task-001");
+            assertThat(event.storeId()).isEqualTo("store-001");
+            assertThat(event.priority()).isEqualTo("HIGH");
+            assertThat(event.assigneeId()).isEqualTo("user-004");
+            assertThat(event.dueAt()).isEqualTo(DUE_TASK_001);
+            assertThat(event.occurredAt()).isEqualTo(NOW);
+        });
+    }
+
+    @Test
+    @DisplayName("the sweep ignores an activity that is not yet past its due date")
+    void publishOverdueBreachesIgnoresActivitiesNotYetDue() {
+        seedTask("task-005", TaskStatus.TODO, TaskPriority.CRITICAL, Instant.parse("2026-02-01T18:00:00Z"));
+
+        assertThat(taskService.publishOverdueBreaches()).isZero();
+        assertThat(overdueEvents()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the sweep republishes on every pass while an activity stays overdue")
+    void publishOverdueBreachesRepublishesWhileStillOverdue() {
+        seedTask("task-001", TaskStatus.TODO, TaskPriority.HIGH, DUE_TASK_001);
+
+        assertThat(taskService.publishOverdueBreaches()).isEqualTo(1);
+        assertThat(taskService.publishOverdueBreaches()).isEqualTo(1);
+        assertThat(taskService.publishOverdueBreaches()).isEqualTo(1);
+
+        // The repetition is the contract, not a defect: the repeat event is how the alerts module
+        // learns a breach is still unresolved, so activities keeps no record of what it announced.
         assertThat(overdueEvents()).extracting(TaskOverdueEvent::taskId)
-                .containsExactlyInAnyOrder("task-high", "task-critical");
+                .containsExactly("task-001", "task-001", "task-001");
     }
 
     @Test

@@ -249,19 +249,23 @@ public class TaskService {
     }
 
     /**
-     * Publishes {@link TaskOverdueEvent} for every SLA-tracked activity past its due date.
+     * Publishes {@link TaskOverdueEvent} for every SLA-tracked activity past its due date, and
+     * returns how many events it published. Driven on a timer by
+     * {@code activities.listener.OverdueSweepScheduler}.
      *
-     * <p>Stub: nothing schedules this yet. It exists so the SLA breach feature has a seam that
-     * already respects the event-bus rule, and returns the number of events published.
+     * <p>Deliberately not idempotent: an activity that is still overdue is republished on every
+     * sweep. The repeat is the signal the alerts module uses to tell an unresolved breach from a
+     * resolved one, so this module keeps no record of what it has already announced - which is also
+     * what keeps alerting state out of the module that must know nothing about alerting.
      *
-     * <p>Transactional so the published events reach their after-commit subscribers.
+     * <p>Transactional so the published events reach their after-commit subscribers. Without it
+     * Spring skips every {@code @TransactionalEventListener} and the sweep silently does nothing.
      */
     @Transactional
     public int publishOverdueBreaches() {
         final Instant now = clock.instant();
-        final List<Task> breached = taskRepository.findAll().stream()
+        final List<Task> breached = taskRepository.findOpenPastDue(now).stream()
                 .filter(Task::isSlaTracked)
-                .filter(task -> task.isOverdueAt(now))
                 .toList();
         breached.forEach(task -> eventBus.publish(new TaskOverdueEvent(
                 task.id(), task.storeId(), task.priority().name(), task.assigneeId(), task.dueAt(), now)));

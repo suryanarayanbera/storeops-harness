@@ -1,5 +1,6 @@
 package com.cognizant.storeops.staff.repository;
 
+import com.cognizant.storeops.staff.domain.StaffRole;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Sort;
@@ -15,6 +16,8 @@ interface UserJpaRepository extends JpaRepository<UserEntity, String> {
     Sort DEFAULT_SORT = Sort.by(Sort.Order.asc("displayName"), Sort.Order.asc("id"));
 
     List<UserEntity> findByStoreId(String storeId, Sort sort);
+
+    List<UserEntity> findByStoreIdAndRole(String storeId, StaffRole role, Sort sort);
 
     Optional<UserEntity> findByEmail(String email);
 }

@@ -4,6 +4,7 @@ import com.cognizant.storeops.activities.domain.Task;
 import com.cognizant.storeops.activities.domain.TaskCategory;
 import com.cognizant.storeops.activities.domain.TaskPriority;
 import com.cognizant.storeops.activities.domain.TaskStatus;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Repository;
@@ -60,6 +61,13 @@ public class JpaTaskRepository implements TaskRepository {
     @Override
     public List<Task> findByStoreId(final String storeId) {
         return toDomain(tasks.findByStoreId(storeId, TaskJpaRepository.DEFAULT_SORT));
+    }
+
+    @Override
+    public List<Task> findOpenPastDue(final Instant moment) {
+        return moment == null
+                ? List.of()
+                : toDomain(tasks.findOpenPastDue(moment, TaskStatus.DONE, TaskJpaRepository.DEFAULT_SORT));
     }
 
     @Override

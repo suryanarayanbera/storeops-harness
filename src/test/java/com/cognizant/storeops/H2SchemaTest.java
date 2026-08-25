@@ -40,7 +40,20 @@ class H2SchemaTest {
     @DisplayName("one table per aggregate, plus the programme membership collection table")
     void schemaHasExpectedTables() {
         assertThat(tableNames()).containsExactly(
-                "NOTIFICATIONS", "PROJECTS", "PROJECT_MEMBERS", "REPORTS", "TASKS", "USERS");
+                "NOTIFICATIONS", "PROJECTS", "PROJECT_MEMBERS", "REPORTS", "SLA_BREACHES", "TASKS", "USERS");
+    }
+
+    @Test
+    @DisplayName("sla_breaches is keyed by activity, so one activity cannot hold two open episodes")
+    void slaBreachesTableShape() {
+        assertThat(columnNames("SLA_BREACHES")).containsExactlyInAnyOrder(
+                "TASK_ID", "STORE_ID", "PRIORITY", "FIRST_BREACH_AT",
+                "LEAD_RECIPIENT_ID", "LEAD_NOTIFIED_AT", "LAST_SEEN_AT",
+                "ESCALATION_RECIPIENT_ID", "ESCALATED_AT");
+        assertThat(jdbc.queryForList(
+                "SELECT column_name FROM information_schema.key_column_usage "
+                        + "WHERE table_schema = 'PUBLIC' AND table_name = 'SLA_BREACHES'",
+                String.class)).containsExactly("TASK_ID");
     }
 
     @Test
@@ -67,9 +80,19 @@ class H2SchemaTest {
     @Test
     @DisplayName("data.sql populated every table it names, and left reports empty")
     void seedDataLoaded() {
+        // Every @SpringBootTest context shares this in-memory database, and the seed is reloaded only
+        // when a context is built - so a table another integration test inserts into cannot be
+        // counted wholesale without the assertion depending on class execution order. Counting the
+        // seed ids instead keeps the count exact and says what the test means: data.sql ran and put
+        // these rows here. Staff needs no such scoping - UserService exposes no mutator, so nothing
+        // can add a user.
         assertThat(jdbc.queryForObject("SELECT count(*) FROM users", Integer.class)).isEqualTo(5);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM projects", Integer.class)).isEqualTo(2);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM project_members", Integer.class)).isEqualTo(4);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM projects WHERE id IN ('project-001', 'project-002')",
+                Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM project_members WHERE project_id IN ('project-001', 'project-002')",
+                Integer.class)).isEqualTo(4);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM tasks", Integer.class)).isGreaterThanOrEqualTo(4);
         assertThat(jdbc.queryForObject("SELECT count(*) FROM notifications", Integer.class)).isGreaterThanOrEqualTo(1);
     }

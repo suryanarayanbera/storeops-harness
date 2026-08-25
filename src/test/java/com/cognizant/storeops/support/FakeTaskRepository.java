@@ -5,6 +5,7 @@ import com.cognizant.storeops.activities.domain.TaskCategory;
 import com.cognizant.storeops.activities.domain.TaskPriority;
 import com.cognizant.storeops.activities.domain.TaskStatus;
 import com.cognizant.storeops.activities.repository.TaskRepository;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
 
@@ -36,5 +37,15 @@ public class FakeTaskRepository extends FakeRepository<Task, String> implements 
     @Override
     public List<Task> findByStoreId(final String storeId) {
         return findMatching(task -> Objects.equals(task.storeId(), storeId));
+    }
+
+    @Override
+    public List<Task> findOpenPastDue(final Instant moment) {
+        if (moment == null) {
+            return List.of();
+        }
+        return findMatching(task -> task.dueAt() != null
+                && task.dueAt().isBefore(moment)
+                && task.status() != TaskStatus.DONE);
     }
 }

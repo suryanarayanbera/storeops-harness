@@ -51,6 +51,26 @@ spring:
       # (code, message, statusCode, path, timestamp).
       enabled: false
 
+# StoreOps feature configuration. Each module configures its own knobs; neither sets the other's
+# timing.
+storeops:
+  activities:
+    sla:
+      # Delay between overdue sweeps, once the first one has run.
+      sweep-interval: PT5M
+      # Deliberately longer than any test run. @EnableScheduling is active in every @SpringBootTest,
+      # so a short first delay would let a sweep fire mid-test and raise alerts that test never asked
+      # for. Tests call TaskService.publishOverdueBreaches() directly instead.
+      initial-delay: PT10M
+      sweep:
+        # Set false to remove the scheduler bean entirely, in an environment that must not alert.
+        enabled: true
+  alerts:
+    sla:
+      # How long a breach may go unresolved before it escalates from the department lead to the store
+      # manager, measured from the first observed breach. Absent or negative falls back to PT2H.
+      grace-period: PT2H
+
 logging:
   level:
     root: INFO

@@ -3,6 +3,7 @@ package com.cognizant.storeops.activities.repository;
 import com.cognizant.storeops.activities.domain.TaskCategory;
 import com.cognizant.storeops.activities.domain.TaskPriority;
 import com.cognizant.storeops.activities.domain.TaskStatus;
+import java.time.Instant;
 import java.util.List;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -38,4 +39,21 @@ interface TaskJpaRepository extends JpaRepository<TaskEntity, String> {
     List<TaskEntity> findByProjectId(String projectId, Sort sort);
 
     List<TaskEntity> findByStoreId(String storeId, Sort sort);
+
+    /**
+     * Backs the overdue sweep. A row whose {@code due_at} is null never matches: the comparison is
+     * unknown rather than true, so SQL excludes it without a null check of its own.
+     *
+     * <p>The terminal status is a parameter rather than an enum literal in the query text, so the
+     * value stays Java-typed and cannot drift from {@code TaskStatus}.
+     */
+    @Query("""
+            SELECT t FROM TaskEntity t
+            WHERE t.dueAt < :moment
+              AND t.status <> :terminalStatus
+            """)
+    List<TaskEntity> findOpenPastDue(
+            @Param("moment") Instant moment,
+            @Param("terminalStatus") TaskStatus terminalStatus,
+            Sort sort);
 }

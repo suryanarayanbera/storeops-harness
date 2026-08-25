@@ -40,3 +40,8 @@ INSERT INTO notifications (id, recipient_id, alert_type, channel, status, subjec
   ('notification-001', 'user-003', 'SHIFT_HANDOVER', 'IN_APP', 'SENT', 'Shift handover checklist outstanding', 'Two chilled compliance checks remain open for the late shift.', 'task-003', TIMESTAMP WITH TIME ZONE '2026-01-06 09:30:00+00', TIMESTAMP WITH TIME ZONE '2026-01-06 09:30:05+00');
 
 -- reports: intentionally empty. Rows appear when a report is requested or a programme closes.
+--
+-- sla_breaches: intentionally empty, for the same reason. A row appears when the overdue sweep finds a
+-- HIGH or CRITICAL activity past its due date and the alerts module tells somebody about it. Seeding one
+-- would mean seeding a breach nobody was ever notified of, and would suppress the alert for that
+-- activity - task-001 is overdue in the seed data, so its first sweep is what opens its episode.

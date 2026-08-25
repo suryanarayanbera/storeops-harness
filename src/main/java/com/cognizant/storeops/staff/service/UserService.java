@@ -1,6 +1,7 @@
 package com.cognizant.storeops.staff.service;
 
 import com.cognizant.storeops.shared.error.NotFoundError;
+import com.cognizant.storeops.staff.domain.StaffRole;
 import com.cognizant.storeops.staff.domain.User;
 import com.cognizant.storeops.staff.repository.UserRepository;
 import java.util.List;
@@ -45,6 +46,17 @@ public class UserService {
     /** Roster for one store. Used by the reports module for headcount aggregation. */
     public List<User> findByStoreId(final String storeId) {
         return userRepository.findByStoreId(storeId);
+    }
+
+    /**
+     * Everyone holding one position at one store, active or not.
+     *
+     * <p>Answers "who holds this role here", and stops there. Which of them is accountable for a
+     * particular piece of work is the asking module's policy, not staff's - the alerts module composes
+     * this read into its own escalation chain rather than asking staff to know about SLAs.
+     */
+    public List<User> findByStoreIdAndRole(final String storeId, final StaffRole role) {
+        return userRepository.findByStoreIdAndRole(storeId, role);
     }
 
     public List<User> findAll() {

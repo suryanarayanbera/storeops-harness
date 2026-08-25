@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
@@ -66,6 +67,10 @@ class EventDeliveryIntegrationTest {
     @Autowired
     private FailingSubscriber failingSubscriber;
 
+    /** The alerts module's breach table is read directly here: a test must not import its repository. */
+    @Autowired
+    private JdbcTemplate jdbc;
+
     private Task createTask(final String title) {
         return taskService.create(new CreateTaskRequest(
                 title, null, null, null, "store-001", null, "user-004", Instant.now().plusSeconds(3_600)));
@@ -73,6 +78,14 @@ class EventDeliveryIntegrationTest {
 
     private List<Notification> alertsFor(final String recipientId) {
         return notificationService.list(recipientId, null);
+    }
+
+    /** SLA breach alerts raised for {@code task-001}, the seed activity the sweep breaches. */
+    private List<Notification> breachAlertsFor(final String recipientId) {
+        return alertsFor(recipientId).stream()
+                .filter(notification -> notification.alertType() == AlertType.SLA_BREACH)
+                .filter(notification -> "task-001".equals(notification.sourceRef()))
+                .toList();
     }
 
     @Test
@@ -111,6 +124,25 @@ class EventDeliveryIntegrationTest {
             assertThat(notification.sourceRef()).isEqualTo(blocked.id());
             assertThat(notification.alertType()).isEqualTo(AlertType.ESCALATION);
         });
+    }
+
+    @Test
+    @DisplayName("a swept overdue activity alerts the department lead once, however many sweeps run")
+    void sweptOverdueBreachReachesTheDepartmentLeadExactlyOnce() {
+        // Seed task-001 is HIGH, still open and past its 2026-01-07 due date, so the sweep breaches
+        // it. No integration test moves it, unlike task-002. Its assignee user-004 works in GROCERY at
+        // store-001, whose department lead is user-003.
+        taskService.publishOverdueBreaches();
+        taskService.publishOverdueBreaches();
+
+        // Filtered by sourceRef rather than counted: the H2 database is shared with the rest of the
+        // suite. Exactly one alert across two sweeps is the point - de-duplication has to survive a
+        // real transaction boundary and a real database, which no fake can prove.
+        assertThat(breachAlertsFor("user-003")).hasSize(1);
+        assertThat(breachAlertsFor("user-004")).isEmpty();
+        assertThat(jdbc.queryForObject(
+                "SELECT count(*) FROM sla_breaches WHERE task_id = 'task-001'", Integer.class))
+                .isEqualTo(1);
     }
 
     @Test

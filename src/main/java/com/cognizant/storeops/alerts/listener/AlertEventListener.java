@@ -2,9 +2,9 @@ package com.cognizant.storeops.alerts.listener;
 
 import com.cognizant.storeops.alerts.domain.AlertType;
 import com.cognizant.storeops.alerts.service.NotificationService;
+import com.cognizant.storeops.alerts.service.SlaBreachService;
 import com.cognizant.storeops.shared.events.TaskOverdueEvent;
 import com.cognizant.storeops.shared.events.TaskStatusChangedEvent;
-import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -41,21 +41,33 @@ public class AlertEventListener {
 
     private static final Logger LOG = LoggerFactory.getLogger(AlertEventListener.class);
 
-    /** Priority bands that warrant an SLA breach alert. */
-    private static final Set<String> SLA_TRACKED_PRIORITIES = Set.of("HIGH", "CRITICAL");
-
     private static final String BLOCKED = "BLOCKED";
 
-    private final NotificationService notificationService;
+    private static final String DONE = "DONE";
 
-    public AlertEventListener(final NotificationService notificationService) {
+    private final NotificationService notificationService;
+    private final SlaBreachService slaBreachService;
+
+    public AlertEventListener(
+            final NotificationService notificationService, final SlaBreachService slaBreachService) {
         this.notificationService = notificationService;
+        this.slaBreachService = slaBreachService;
     }
 
-    /** A blocked activity needs somebody told. Every other transition is informational. */
+    /**
+     * A blocked activity needs somebody told; a finished one ends any SLA breach it was running. Every
+     * other transition is informational.
+     *
+     * <p>The two branches are independent, and both belong on this handler: they are the same fact
+     * ("this activity changed status") read for two different purposes.
+     */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onTaskStatusChanged(final TaskStatusChangedEvent event) {
+        if (DONE.equals(event.newStatus())) {
+            slaBreachService.closeEpisode(event.taskId());
+            return;
+        }
         if (!BLOCKED.equals(event.newStatus())) {
             LOG.debug("No alert for {} -> {} on task {}", event.previousStatus(), event.newStatus(), event.taskId());
             return;
@@ -72,24 +84,18 @@ public class AlertEventListener {
                 event.taskId());
     }
 
-    /** SLA breach alerting, stub: HIGH and CRITICAL only, no grace period or escalation chain yet. */
+    /**
+     * An overdue activity is an observation, not a transition: the sweep republishes it every pass
+     * while the activity stays overdue.
+     *
+     * <p>Which of those observations deserves an alert, and for whom, is
+     * {@link SlaBreachService}'s decision - it needs a durable memory of the breach to answer, and that
+     * memory is the alerts module's own table. This handler only translates the event into the call.
+     */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onTaskOverdue(final TaskOverdueEvent event) {
-        if (!SLA_TRACKED_PRIORITIES.contains(event.priority())) {
-            LOG.debug("Overdue task {} is {} priority; no SLA alert", event.taskId(), event.priority());
-            return;
-        }
-        if (isUnassigned(event.assigneeId(), event.taskId())) {
-            return;
-        }
-        notificationService.raise(
-                event.assigneeId(),
-                AlertType.SLA_BREACH,
-                "SLA breach on " + event.priority() + " activity",
-                "Activity " + event.taskId() + " at store " + event.storeId()
-                        + " passed its due date of " + event.dueAt() + " without reaching DONE.",
-                event.taskId());
+        slaBreachService.observe(event);
     }
 
     private static boolean isUnassigned(final String assigneeId, final String taskId) {

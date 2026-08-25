@@ -1,5 +1,6 @@
 package com.cognizant.storeops.staff.repository;
 
+import com.cognizant.storeops.staff.domain.StaffRole;
 import com.cognizant.storeops.staff.domain.User;
 import java.util.List;
 import java.util.Optional;
@@ -39,6 +40,13 @@ public class JpaUserRepository implements UserRepository {
     @Override
     public List<User> findByStoreId(final String storeId) {
         return toDomain(users.findByStoreId(storeId, UserJpaRepository.DEFAULT_SORT));
+    }
+
+    @Override
+    public List<User> findByStoreIdAndRole(final String storeId, final StaffRole role) {
+        return storeId == null || role == null
+                ? List.of()
+                : toDomain(users.findByStoreIdAndRole(storeId, role, UserJpaRepository.DEFAULT_SORT));
     }
 
     @Override

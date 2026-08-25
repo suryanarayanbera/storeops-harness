@@ -1,5 +1,6 @@
 package com.cognizant.storeops.staff.repository;
 
+import com.cognizant.storeops.staff.domain.StaffRole;
 import com.cognizant.storeops.staff.domain.User;
 import java.util.List;
 import java.util.Optional;
@@ -19,6 +20,9 @@ public interface UserRepository {
     List<User> findAll();
 
     List<User> findByStoreId(String storeId);
+
+    /** Everyone holding one position at one store, active or not. */
+    List<User> findByStoreIdAndRole(String storeId, StaffRole role);
 
     Optional<User> findByEmail(String email);
 }
