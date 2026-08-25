@@ -32,8 +32,10 @@ Create this file and write all of the following sections (use `none` if a field 
    * `generator-summary.md` -> `sprint-[N]-generator-summary.md`
    * `evaluator-feedback.md` -> `sprint-[N]-evaluator-feedback.md`
    * `escalation.md` -> `sprint-[N]-escalation.md` (if applicable)
-2. Ensure `.harness/output/` retains only `spec.md` and pending sprint contracts.
-3. Run `git add .harness/reviews/` to stage the audit trail.
+2. **On the final sprint only**, also move `spec.md` -> `.harness/reviews/sprint-[N]-spec.md`, leaving `.harness/output/` empty. Keep `spec.md` in place at every earlier close: it is the only record of the remaining sprints, and the memory reset in Output C tells the orchestrator to retain the system state it defines. Archive it too early and the next sprint starts blind.
+3. Keep `spec.md` in `.harness/output/` when a sprint escalates, whichever sprint it is. The run is halted for human intervention, not finished, and the spec is what the human reads to decide what happens next.
+4. Otherwise `.harness/output/` retains only `spec.md` and the contracts for sprints not yet run.
+5. Run `git add .harness/reviews/` to stage the audit trail.
 
 ### Output C: System Directives & Routing
 * **Memory Reset Directive (Sprint Close Only):** Output this exact directive:
