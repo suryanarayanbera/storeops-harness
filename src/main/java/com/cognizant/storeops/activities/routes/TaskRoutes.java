@@ -3,9 +3,12 @@ package com.cognizant.storeops.activities.routes;
 import com.cognizant.storeops.activities.domain.TaskCategory;
 import com.cognizant.storeops.activities.domain.TaskPriority;
 import com.cognizant.storeops.activities.domain.TaskStatus;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateRequest;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateResponse;
 import com.cognizant.storeops.activities.dto.CreateTaskRequest;
 import com.cognizant.storeops.activities.dto.TaskResponse;
 import com.cognizant.storeops.activities.dto.UpdateTaskRequest;
+import com.cognizant.storeops.activities.service.TaskBulkStatusService;
 import com.cognizant.storeops.activities.service.TaskService;
 import jakarta.validation.Valid;
 import java.net.URI;
@@ -32,9 +35,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class TaskRoutes {
 
     private final TaskService taskService;
+    private final TaskBulkStatusService taskBulkStatusService;
 
-    public TaskRoutes(final TaskService taskService) {
+    public TaskRoutes(final TaskService taskService, final TaskBulkStatusService taskBulkStatusService) {
         this.taskService = taskService;
+        this.taskBulkStatusService = taskBulkStatusService;
     }
 
     /** Endpoint 1: {@code GET /api/tasks}. */
@@ -69,5 +74,22 @@ public class TaskRoutes {
             @PathVariable final String id,
             @Valid @RequestBody final UpdateTaskRequest request) {
         return ResponseEntity.ok(TaskResponse.from(taskService.update(id, request)));
+    }
+
+    /**
+     * Endpoint 5: {@code PATCH /api/tasks/bulk-status}. Shift handover, one activity at a time.
+     *
+     * <p>Answers {@code 200 OK} whenever the payload is well formed, even if every activity in it
+     * failed; which ones succeeded is reported per activity in the body. The loop, the per-activity
+     * decisions and the error mapping all live in {@link TaskBulkStatusService} - this method maps
+     * and validates, nothing more.
+     *
+     * <p>The literal path wins over {@code /{id}} in Spring's pattern comparison, so this is never
+     * read as an update to an activity whose id is the string {@code bulk-status}.
+     */
+    @PatchMapping("/bulk-status")
+    public ResponseEntity<BulkStatusUpdateResponse> bulkUpdateStatus(
+            @Valid @RequestBody final BulkStatusUpdateRequest request) {
+        return ResponseEntity.ok(taskBulkStatusService.bulkUpdateStatus(request));
     }
 }

@@ -3,6 +3,7 @@ package com.cognizant.storeops.activities.routes;
 import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -15,14 +16,21 @@ import com.cognizant.storeops.activities.domain.Task;
 import com.cognizant.storeops.activities.domain.TaskCategory;
 import com.cognizant.storeops.activities.domain.TaskPriority;
 import com.cognizant.storeops.activities.domain.TaskStatus;
+import com.cognizant.storeops.activities.dto.BulkStatusFailure;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateRequest;
+import com.cognizant.storeops.activities.dto.BulkStatusUpdateResponse;
 import com.cognizant.storeops.activities.dto.CreateTaskRequest;
+import com.cognizant.storeops.activities.dto.TaskResponse;
 import com.cognizant.storeops.activities.dto.UpdateTaskRequest;
+import com.cognizant.storeops.activities.service.TaskBulkStatusService;
 import com.cognizant.storeops.activities.service.TaskService;
 import com.cognizant.storeops.shared.error.ConflictError;
 import com.cognizant.storeops.shared.error.NotFoundError;
 import com.cognizant.storeops.shared.error.ValidationError;
 import java.time.Instant;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,6 +56,9 @@ class TaskRoutesTest {
 
     @MockitoBean
     private TaskService taskService;
+
+    @MockitoBean
+    private TaskBulkStatusService taskBulkStatusService;
 
     private static Task sampleTask() {
         return new Task("task-001", "Restock aisle 4 beverages", "Weekend promotion overflow",
@@ -182,5 +193,162 @@ class TaskRoutesTest {
                         .content("{}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    // ------------------------------------------------------ PATCH /api/tasks/bulk-status
+
+    /** A batch of {@code size} well-formed items, all targeting DONE. */
+    private static String batchOf(final int size) {
+        return IntStream.rangeClosed(1, size)
+                .mapToObj(index -> "{\"taskId\":\"task-%03d\",\"status\":\"DONE\"}".formatted(index))
+                .collect(Collectors.joining(",", "{\"updates\":[", "]}"));
+    }
+
+    @Test
+    @DisplayName("PATCH /api/tasks/bulk-status returns 200 with the per-activity outcomes")
+    void bulkStatusReturnsPerActivityOutcomes() throws Exception {
+        when(taskBulkStatusService.bulkUpdateStatus(any(BulkStatusUpdateRequest.class)))
+                .thenReturn(new BulkStatusUpdateResponse(
+                        List.of(TaskResponse.from(sampleTask().withStatus(TaskStatus.DONE, NOW))),
+                        List.of(new BulkStatusFailure("task-999", "TASK_NOT_FOUND", "not found", 404))));
+
+        mockMvc.perform(patch("/api/tasks/bulk-status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"updates":[{"taskId":"task-001","status":"DONE"},
+                                            {"taskId":"task-999","status":"DONE"}]}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded", hasSize(1)))
+                .andExpect(jsonPath("$.succeeded[0].id").value("task-001"))
+                .andExpect(jsonPath("$.succeeded[0].status").value("DONE"))
+                .andExpect(jsonPath("$.failed", hasSize(1)))
+                .andExpect(jsonPath("$.failed[0].taskId").value("task-999"))
+                .andExpect(jsonPath("$.failed[0].code").value("TASK_NOT_FOUND"))
+                .andExpect(jsonPath("$.failed[0].statusCode").value(404));
+    }
+
+    @Test
+    @DisplayName("PATCH /api/tasks/bulk-status rejects an empty batch with 400 VALIDATION_FAILED")
+    void bulkStatusRejectsEmptyBatch() throws Exception {
+        mockMvc.perform(patch("/api/tasks/bulk-status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"updates\":[]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.statusCode").value(400))
+                .andExpect(jsonPath("$.details[0]").value("updates: must contain at least one update"));
+
+        verifyNoInteractions(taskBulkStatusService);
+    }
+
+    @Test
+    @DisplayName("PATCH /api/tasks/bulk-status rejects a payload with no updates field at all")
+    void bulkStatusRejectsMissingUpdatesField() throws Exception {
+        mockMvc.perform(patch("/api/tasks/bulk-status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        verifyNoInteractions(taskBulkStatusService);
+    }
+
+    @Test
+    @DisplayName("PATCH /api/tasks/bulk-status rejects an item with a blank id or a missing status")
+    void bulkStatusRejectsMalformedItem() throws Exception {
+        mockMvc.perform(patch("/api/tasks/bulk-status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"updates\":[{\"taskId\":\"  \"}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.details", hasSize(2)));
+
+        verifyNoInteractions(taskBulkStatusService);
+    }
+
+    @Test
+    @DisplayName("PATCH /api/tasks/bulk-status rejects a null item rather than letting it reach the service")
+    void bulkStatusRejectsNullItem() throws Exception {
+        // @Valid cascades into a collection but skips null elements, so without @NotNull on the
+        // type argument this payload reached the service and threw a raw NullPointerException,
+        // answering 500 INTERNAL_ERROR instead of 400.
+        mockMvc.perform(patch("/api/tasks/bulk-status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"updates\":[null]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.statusCode").value(400))
+                .andExpect(jsonPath("$.details[0]").value("updates[0]: must not be null"));
+
+        verifyNoInteractions(taskBulkStatusService);
+    }
+
+    @Test
+    @DisplayName("PATCH /api/tasks/bulk-status rejects a null item mixed in with valid ones")
+    void bulkStatusRejectsNullItemAmongValidOnes() throws Exception {
+        mockMvc.perform(patch("/api/tasks/bulk-status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"updates\":[{\"taskId\":\"task-001\",\"status\":\"DONE\"},null]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+
+        verifyNoInteractions(taskBulkStatusService);
+    }
+
+    @Test
+    @DisplayName("PATCH /api/tasks/bulk-status rejects a 51st item but accepts a batch of exactly 50")
+    void bulkStatusEnforcesTheBatchSizeLimit() throws Exception {
+        when(taskBulkStatusService.bulkUpdateStatus(any(BulkStatusUpdateRequest.class)))
+                .thenReturn(new BulkStatusUpdateResponse(List.of(), List.of()));
+
+        mockMvc.perform(patch("/api/tasks/bulk-status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(batchOf(51)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.details[0]").value("updates: must contain at most 50 updates"));
+
+        mockMvc.perform(patch("/api/tasks/bulk-status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(batchOf(50)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded", hasSize(0)))
+                .andExpect(jsonPath("$.failed", hasSize(0)));
+    }
+
+    @Test
+    @DisplayName("PATCH /api/tasks/bulk-status surfaces a whole-batch ValidationError as 400")
+    void bulkStatusSurfacesWholeBatchValidationError() throws Exception {
+        when(taskBulkStatusService.bulkUpdateStatus(any(BulkStatusUpdateRequest.class)))
+                .thenThrow(new ValidationError("A shift handover must not name the same activity twice",
+                        List.of("updates: duplicate taskId 'task-001'")));
+
+        mockMvc.perform(patch("/api/tasks/bulk-status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"updates":[{"taskId":"task-001","status":"DONE"},
+                                            {"taskId":"task-001","status":"BLOCKED"}]}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.details[0]").value("updates: duplicate taskId 'task-001'"));
+    }
+
+    @Test
+    @DisplayName("the bulk path is routed to the bulk handler, not read as an activity id")
+    void bulkPathIsNotReadAsAnActivityId() throws Exception {
+        when(taskBulkStatusService.bulkUpdateStatus(any(BulkStatusUpdateRequest.class)))
+                .thenReturn(new BulkStatusUpdateResponse(List.of(), List.of()));
+
+        mockMvc.perform(patch("/api/tasks/bulk-status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"updates\":[{\"taskId\":\"task-001\",\"status\":\"DONE\"}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.succeeded").exists())
+                .andExpect(jsonPath("$.failed").exists());
+
+        // The single-activity handler must not have been reached with "bulk-status" as the id.
+        verifyNoInteractions(taskService);
     }
 }
