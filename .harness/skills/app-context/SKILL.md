@@ -32,7 +32,7 @@ Inside a module, stick to these packages: `routes`, `service`, `repository`, `do
 adding one.
 
 ## 3. The API
-Nine endpoints exist today. Route bases matter, so use the real ones.
+Twelve endpoints exist today. Route bases matter, so use the real ones.
 
 | Method | Path | Module | What it does |
 | --- | --- | --- | --- |
@@ -40,11 +40,14 @@ Nine endpoints exist today. Route bases matter, so use the real ones.
 | POST | `/api/tasks` | activities | Create an activity |
 | GET | `/api/tasks/{id}` | activities | Fetch one activity |
 | PATCH | `/api/tasks/{id}` | activities | Partial update. A status change publishes an event |
+| PATCH | `/api/tasks/bulk-status` | activities | Shift handover. Per-activity outcomes come back in the body, not the status |
 | GET | `/api/projects` | programmes | List programmes |
 | POST | `/api/projects` | programmes | Create a programme |
+| POST | `/api/projects/{id}/templates` | programmes | Apply a task template. `202`; the activities are created by `activities` after commit |
 | GET | `/api/users/{id}` | staff | Fetch one staff member |
 | GET | `/api/notifications` | alerts | List alerts for a recipient |
 | GET | `/api/reports/store/{storeId}` | reports | Store summary, built on demand |
+| GET | `/api/reports/region/{regionId}` | reports | Regional rollup across every store in the region |
 
 Note the paths use `/api/tasks`, `/api/projects` and `/api/users`, not `/api/activities`,
 `/api/programmes` or `/api/staff`. The module names and the URL names differ. Don't "fix" it.
@@ -66,14 +69,20 @@ These are the only valid values. Copy them exactly, including the underscores.
 | `ReportType` | `STORE_SUMMARY`, `REGIONAL_ROLLUP`, `DEPARTMENT_PERFORMANCE` |
 | `ReportStatus` | `PENDING`, `READY`, `FAILED` |
 
-Two domain rules that go with them:
+Three domain rules that go with them:
 * `DONE` is the end of the line for a task. Any transition out of `DONE` is rejected with
   `TASK_TRANSITION_NOT_ALLOWED` (409).
 * A programme that is already `CLOSED` cannot be closed again. That is
   `PROGRAMME_ALREADY_CLOSED` (409).
+* A `CLOSED` programme takes no new activities. That is `PROGRAMME_CLOSED` (409) — a different rule
+  from the one above, with a different fix, so it keeps its own code.
+
+There is no `Department` entity and no department enum. Departments live as a free-text
+`users.department` string (`OPERATIONS` and `GROCERY` in the seed), reachable through
+`User.profile().department()`. Match them case-insensitively; do not invent an enum for them.
 
 ## 5. The Event Catalogue
-Three events exist. This is the whole list. Modules talk to each other through these, not by
+Five events exist. This is the whole list. Modules talk to each other through these, not by
 importing each other's services.
 
 | Event | `eventType()` | Published by | Payload | Listened to by | What the listener does |
@@ -81,6 +90,8 @@ importing each other's services.
 | `TaskStatusChangedEvent` | `TASK_STATUS_CHANGED` | `activities` → `TaskService` | `taskId`, `storeId`, `previousStatus`, `newStatus`, `priority`, `assigneeId`, `occurredAt` | `alerts` → `AlertEventListener` | Raises an `ESCALATION` alert when a task becomes `BLOCKED` |
 | `TaskOverdueEvent` | `TASK_OVERDUE` | `activities` | `taskId`, `storeId`, `priority`, `assigneeId`, `dueAt`, `occurredAt` | `alerts` → `AlertEventListener` | Raises an `SLA_BREACH` alert, but only for `HIGH` and `CRITICAL` |
 | `ProgrammeClosedEvent` | `PROGRAMME_CLOSED` | `programmes` → `ProjectService` | `projectId`, `storeId`, `closedByUserId`, `occurredAt` | `reports` → `ReportEventListener` | Queues a `STORE_SUMMARY` report |
+| `RegionalRollupRequestedEvent` | `REGIONAL_ROLLUP_REQUESTED` | `reports` → `ReportService` | `regionId`, `requestedBy`, `storeCount`, `occurredAt` | `reports` → `ReportEventListener` | Queues a `REGIONAL_ROLLUP` report. Same module both sides, deliberately: the rollup is a read and recording it must not fail the caller's `GET` |
+| `ProgrammeTemplateRequestedEvent` | `PROGRAMME_TEMPLATE_REQUESTED` | `programmes` → `ProjectService` | `projectId`, `storeId`, `templateId`, `requestedBy`, `items`, `occurredAt` | `activities` → `TaskTemplateEventListener` | Creates one activity per carried item, skipping titles already on the programme |
 
 Things to know about events:
 * Publish with `eventBus.publish(...)`. The `EventBus` interface lives in `shared/events`. Never
@@ -147,5 +158,5 @@ answer every run.
 Before you hand work over, ask yourself:
 * Is every enum value, route path and id I wrote listed above?
 * Did anything cross a module boundary? If so, is it an event from section 5, and did I use an
-  existing one rather than adding a fourth?
+  existing one rather than adding a sixth?
 * Does every failure path throw an `AppError` with a code from section 6?

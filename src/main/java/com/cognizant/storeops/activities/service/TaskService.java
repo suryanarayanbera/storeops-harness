@@ -13,11 +13,18 @@ import com.cognizant.storeops.shared.error.ValidationError;
 import com.cognizant.storeops.shared.events.EventBus;
 import com.cognizant.storeops.shared.events.TaskOverdueEvent;
 import com.cognizant.storeops.shared.events.TaskStatusChangedEvent;
+import com.cognizant.storeops.shared.events.TemplateTaskDefinition;
 import com.cognizant.storeops.staff.service.UserService;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -147,6 +154,100 @@ public class TaskService {
                     now));
         }
         return saved;
+    }
+
+    /**
+     * Creates the activities carried by a {@code PROGRAMME_TEMPLATE_REQUESTED} event.
+     *
+     * <p>The items arrive fully resolved: the programmes module has already expanded the template and
+     * chosen each assignee, so nothing here reads programme membership or a template catalogue. That
+     * is what keeps this module free of any import of {@code programmes}.
+     *
+     * <p>Runs inside the listener's {@code REQUIRES_NEW} transaction rather than declaring one of its
+     * own, and publishes nothing: these activities are born {@code TODO}, so no status transitioned
+     * and there is no {@code TaskStatusChangedEvent} to raise.
+     *
+     * <p>Nothing here throws. By the time this runs the publishing transaction has committed and the
+     * caller has its {@code 202}, so an exception would be swallowed by the {@code ErrorHandler} in
+     * {@code EventBusConfiguration} and cost the whole batch for one bad field. Every unusable value
+     * degrades instead: an unrecognised priority becomes {@code MEDIUM}, an unrecognised category
+     * {@code GENERAL}, an assignee the staff module does not know becomes unassigned, and an item with
+     * no title is skipped.
+     *
+     * @param projectId programme the activities belong to
+     * @param storeId   store to create them in
+     * @param items     resolved activities to create, in order
+     * @return the activities actually created, which excludes every skipped item
+     */
+    public List<Task> createFromTemplate(
+            final String projectId, final String storeId, final List<TemplateTaskDefinition> items) {
+        if (items == null || items.isEmpty()) {
+            return List.of();
+        }
+        // Seeded with what the programme already holds, then added to as the batch is walked, so a
+        // repeat call creates nothing and a template carrying a duplicate title creates it once.
+        // Every category counts: a title clash is a clash, whatever kind of work it was.
+        final Set<String> takenTitles = taskRepository.findByProjectId(projectId).stream()
+                .map(task -> titleKey(task.title()))
+                .collect(Collectors.toCollection(HashSet::new));
+        final Instant now = clock.instant();
+
+        final List<Task> created = new ArrayList<>();
+        for (final TemplateTaskDefinition item : items) {
+            if (item.title() == null || item.title().isBlank() || !takenTitles.add(titleKey(item.title()))) {
+                continue;
+            }
+            created.add(taskRepository.save(new Task(
+                    UUID.randomUUID().toString(),
+                    item.title().trim(),
+                    item.description(),
+                    TaskStatus.TODO,
+                    priorityOrDefault(item.priority()),
+                    categoryOrDefault(item.category()),
+                    storeId,
+                    projectId,
+                    knownAssigneeOrNull(item.assigneeId()),
+                    null,
+                    now,
+                    now)));
+        }
+        return List.copyOf(created);
+    }
+
+    /** Titles are compared ignoring case and surrounding whitespace. */
+    private static String titleKey(final String title) {
+        return title == null ? "" : title.trim().toLowerCase(Locale.ROOT);
+    }
+
+    /** Matches a {@code TaskPriority} by name, falling back to MEDIUM as {@link #create} does. */
+    private static TaskPriority priorityOrDefault(final String name) {
+        return Arrays.stream(TaskPriority.values())
+                .filter(value -> value.name().equalsIgnoreCase(trimmed(name)))
+                .findFirst()
+                .orElse(TaskPriority.MEDIUM);
+    }
+
+    /** Matches a {@code TaskCategory} by name, falling back to GENERAL as {@link #create} does. */
+    private static TaskCategory categoryOrDefault(final String name) {
+        return Arrays.stream(TaskCategory.values())
+                .filter(value -> value.name().equalsIgnoreCase(trimmed(name)))
+                .findFirst()
+                .orElse(TaskCategory.GENERAL);
+    }
+
+    private static String trimmed(final String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    /**
+     * Keeps an assignee the staff module knows, and drops one it does not.
+     *
+     * <p>Deliberately not the {@code ValidationError} that {@link #create} raises for the same input.
+     * That path has a caller to tell; this one does not, and refusing the activity would lose the work
+     * as well as the assignment.
+     */
+    private String knownAssigneeOrNull(final String assigneeId) {
+        return assigneeId != null && userService.exists(assigneeId) ? assigneeId : null;
     }
 
     /** Read-only view for the programmes and reports modules. */

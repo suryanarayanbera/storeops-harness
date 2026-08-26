@@ -16,6 +16,7 @@ import com.cognizant.storeops.shared.error.NotFoundError;
 import com.cognizant.storeops.shared.error.ValidationError;
 import com.cognizant.storeops.shared.events.TaskOverdueEvent;
 import com.cognizant.storeops.shared.events.TaskStatusChangedEvent;
+import com.cognizant.storeops.shared.events.TemplateTaskDefinition;
 import com.cognizant.storeops.staff.service.UserService;
 import com.cognizant.storeops.support.FakeTaskRepository;
 import com.cognizant.storeops.support.RecordingEventBus;
@@ -310,5 +311,194 @@ class TaskServiceTest {
         assertThat(taskService.list(TaskStatus.BLOCKED, null, null, null))
                 .extracting(Task::id).containsExactly("task-002");
         assertThat(taskService.list(null, null, null, "store-999")).isEmpty();
+    }
+
+    // -------------------------------------------------------------- createFromTemplate
+
+    private static TemplateTaskDefinition item(final String title, final String priority, final String assigneeId) {
+        return new TemplateTaskDefinition(title, "from the standard planogram set", "PLANOGRAM",
+                priority, assigneeId);
+    }
+
+    private List<Task> applyTwoItems() {
+        return taskService.createFromTemplate("project-001", "store-001", List.of(
+                item("Reset entrance promotional bay", "HIGH", "user-004"),
+                item("Verify shelf-edge labelling", "MEDIUM", null)));
+    }
+
+    @Test
+    @DisplayName("createFromTemplate raises each carried item as a TODO PLANOGRAM activity")
+    void createFromTemplateRaisesEachItem() {
+        final List<Task> created = applyTwoItems();
+
+        assertThat(created).hasSize(2);
+        assertThat(created).extracting(Task::title)
+                .containsExactly("Reset entrance promotional bay", "Verify shelf-edge labelling");
+        assertThat(created).allSatisfy(task -> {
+            assertThat(task.status()).isEqualTo(TaskStatus.TODO);
+            assertThat(task.category()).isEqualTo(TaskCategory.PLANOGRAM);
+            assertThat(task.projectId()).isEqualTo("project-001");
+            assertThat(task.storeId()).isEqualTo("store-001");
+            assertThat(task.dueAt()).isNull();
+            assertThat(task.createdAt()).isEqualTo(NOW);
+            assertThat(task.updatedAt()).isEqualTo(NOW);
+            assertThat(task.id()).isNotBlank();
+        });
+        assertThat(created).extracting(Task::priority)
+                .containsExactly(TaskPriority.HIGH, TaskPriority.MEDIUM);
+        assertThat(created).extracting(Task::assigneeId).containsExactly("user-004", null);
+        // Persisted, not merely returned.
+        assertThat(taskRepository.findByProjectId("project-001")).hasSize(2);
+        assertThat(created).extracting(Task::id).doesNotHaveDuplicates();
+    }
+
+    @Test
+    @DisplayName("createFromTemplate publishes nothing: the activities are born TODO, nothing transitioned")
+    void createFromTemplatePublishesNothing() {
+        applyTwoItems();
+
+        // The whole event bus, not just TaskStatusChangedEvent - this path should be silent.
+        assertThat(eventBus.published()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("createFromTemplate skips an item whose title is already on the programme")
+    void createFromTemplateSkipsTitlesAlreadyPresent() {
+        taskRepository.save(new Task("task-existing", "Verify shelf-edge labelling", "raised by hand",
+                TaskStatus.IN_PROGRESS, TaskPriority.LOW, TaskCategory.GENERAL, "store-001",
+                "project-001", "user-004", null, NOW, NOW));
+
+        final List<Task> created = applyTwoItems();
+
+        assertThat(created).extracting(Task::title).containsExactly("Reset entrance promotional bay");
+        assertThat(taskRepository.findByProjectId("project-001")).hasSize(2);
+        // The clash was with a GENERAL activity, so the skip is not category-scoped, and the existing
+        // row is left exactly as it was.
+        final Task untouched = taskRepository.findById("task-existing").orElseThrow();
+        assertThat(untouched.category()).isEqualTo(TaskCategory.GENERAL);
+        assertThat(untouched.status()).isEqualTo(TaskStatus.IN_PROGRESS);
+        assertThat(untouched.updatedAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    @DisplayName("createFromTemplate compares titles ignoring case and surrounding whitespace")
+    void createFromTemplateComparesTitlesLoosely() {
+        taskRepository.save(new Task("task-existing", "  verify SHELF-EDGE labelling  ", null,
+                TaskStatus.TODO, TaskPriority.LOW, TaskCategory.PLANOGRAM, "store-001",
+                "project-001", null, null, NOW, NOW));
+
+        assertThat(applyTwoItems()).extracting(Task::title)
+                .containsExactly("Reset entrance promotional bay");
+    }
+
+    @Test
+    @DisplayName("createFromTemplate is idempotent: a second identical call creates nothing")
+    void createFromTemplateIsIdempotent() {
+        assertThat(applyTwoItems()).hasSize(2);
+        assertThat(applyTwoItems()).isEmpty();
+
+        assertThat(taskRepository.findByProjectId("project-001")).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("createFromTemplate ignores activities on a different programme when skipping")
+    void createFromTemplateScopesTheSkipToTheProgramme() {
+        taskRepository.save(new Task("task-elsewhere", "Verify shelf-edge labelling", null,
+                TaskStatus.TODO, TaskPriority.LOW, TaskCategory.PLANOGRAM, "store-002",
+                "project-002", null, null, NOW, NOW));
+
+        // Same title, different programme, so it is not a clash here.
+        assertThat(applyTwoItems()).hasSize(2);
+    }
+
+    @Test
+    @DisplayName("createFromTemplate creates a duplicated title within one batch only once")
+    void createFromTemplateDeduplicatesWithinTheBatch() {
+        final List<Task> created = taskService.createFromTemplate("project-001", "store-001", List.of(
+                item("Reset entrance promotional bay", "HIGH", null),
+                item("reset entrance promotional bay", "LOW", null)));
+
+        assertThat(created).hasSize(1);
+        assertThat(created.getFirst().priority()).isEqualTo(TaskPriority.HIGH);
+    }
+
+    @Test
+    @DisplayName("createFromTemplate falls back to MEDIUM for a priority it does not recognise")
+    void createFromTemplateFallsBackToMediumPriority() {
+        final List<Task> created = taskService.createFromTemplate("project-001", "store-001", List.of(
+                item("Reset entrance promotional bay", "URGENT", null),
+                item("Verify shelf-edge labelling", null, null),
+                item("Photograph completed bays for compliance", "   ", null)));
+
+        // Degrades rather than throwing: an exception here is swallowed after commit and would cost
+        // the whole batch for one bad field.
+        assertThat(created).extracting(Task::priority)
+                .containsExactly(TaskPriority.MEDIUM, TaskPriority.MEDIUM, TaskPriority.MEDIUM);
+    }
+
+    @Test
+    @DisplayName("createFromTemplate matches a priority name whatever its case")
+    void createFromTemplateMatchesPriorityIgnoringCase() {
+        final List<Task> created = taskService.createFromTemplate("project-001", "store-001",
+                List.of(item("Reset entrance promotional bay", " critical ", null)));
+
+        assertThat(created).singleElement()
+                .extracting(Task::priority).isEqualTo(TaskPriority.CRITICAL);
+    }
+
+    @Test
+    @DisplayName("createFromTemplate falls back to GENERAL for a category it does not recognise")
+    void createFromTemplateFallsBackToGeneralCategory() {
+        final List<Task> created = taskService.createFromTemplate("project-001", "store-001", List.of(
+                new TemplateTaskDefinition("Reset entrance promotional bay", null, "SHELF_ART", "LOW", null),
+                new TemplateTaskDefinition("Verify shelf-edge labelling", null, null, "LOW", null)));
+
+        assertThat(created).extracting(Task::category)
+                .containsExactly(TaskCategory.GENERAL, TaskCategory.GENERAL);
+    }
+
+    @Test
+    @DisplayName("createFromTemplate drops an assignee the staff module does not know, keeping the activity")
+    void createFromTemplateDropsUnknownAssignee() {
+        final List<Task> created = taskService.createFromTemplate("project-001", "store-001",
+                List.of(item("Reset entrance promotional bay", "HIGH", "user-999")));
+
+        // Not the ValidationError create() raises for the same input: there is no caller to tell, and
+        // refusing would lose the work as well as the assignment.
+        assertThat(created).singleElement().satisfies(task -> {
+            assertThat(task.assigneeId()).isNull();
+            assertThat(task.title()).isEqualTo("Reset entrance promotional bay");
+        });
+    }
+
+    @Test
+    @DisplayName("createFromTemplate skips an item with no usable title")
+    void createFromTemplateSkipsUntitledItems() {
+        final List<Task> created = taskService.createFromTemplate("project-001", "store-001", List.of(
+                item(null, "HIGH", null),
+                item("   ", "HIGH", null),
+                item("Reset entrance promotional bay", "HIGH", null)));
+
+        assertThat(created).extracting(Task::title).containsExactly("Reset entrance promotional bay");
+    }
+
+    @Test
+    @DisplayName("createFromTemplate trims the title it stores")
+    void createFromTemplateTrimsTheStoredTitle() {
+        final List<Task> created = taskService.createFromTemplate("project-001", "store-001",
+                List.of(item("  Reset entrance promotional bay  ", "HIGH", null)));
+
+        assertThat(created).singleElement()
+                .extracting(Task::title).isEqualTo("Reset entrance promotional bay");
+    }
+
+    @Test
+    @DisplayName("createFromTemplate writes nothing for an empty or null item list")
+    void createFromTemplateHandlesNoItems() {
+        assertThat(taskService.createFromTemplate("project-001", "store-001", List.of())).isEmpty();
+        assertThat(taskService.createFromTemplate("project-001", "store-001", null)).isEmpty();
+
+        assertThat(taskRepository.count()).isZero();
+        assertThat(eventBus.published()).isEmpty();
     }
 }
