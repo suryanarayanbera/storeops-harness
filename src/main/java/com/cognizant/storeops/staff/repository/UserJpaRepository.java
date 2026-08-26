@@ -16,5 +16,7 @@ interface UserJpaRepository extends JpaRepository<UserEntity, String> {
 
     List<UserEntity> findByStoreId(String storeId, Sort sort);
 
+    List<UserEntity> findByRegionId(String regionId, Sort sort);
+
     Optional<UserEntity> findByEmail(String email);
 }

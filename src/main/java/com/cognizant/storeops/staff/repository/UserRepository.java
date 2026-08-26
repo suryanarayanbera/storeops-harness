@@ -20,5 +20,7 @@ public interface UserRepository {
 
     List<User> findByStoreId(String storeId);
 
+    List<User> findByRegionId(String regionId);
+
     Optional<User> findByEmail(String email);
 }

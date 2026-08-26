@@ -42,6 +42,11 @@ public class JpaUserRepository implements UserRepository {
     }
 
     @Override
+    public List<User> findByRegionId(final String regionId) {
+        return toDomain(users.findByRegionId(regionId, UserJpaRepository.DEFAULT_SORT));
+    }
+
+    @Override
     public Optional<User> findByEmail(final String email) {
         return email == null ? Optional.empty() : users.findByEmail(email).map(UserEntity::toDomain);
     }

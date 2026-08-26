@@ -20,6 +20,7 @@ import java.util.Optional;
 public class FakeUserRepository extends FakeRepository<User, String> implements UserRepository {
 
     private static final Instant REGISTERED = Instant.parse("2026-01-06T08:00:00Z");
+    private static final String SEED_REGION = "region-north";
 
     public FakeUserRepository() {
         super(User::id);
@@ -28,6 +29,11 @@ public class FakeUserRepository extends FakeRepository<User, String> implements 
     @Override
     public List<User> findByStoreId(final String storeId) {
         return findMatching(user -> Objects.equals(user.storeId(), storeId));
+    }
+
+    @Override
+    public List<User> findByRegionId(final String regionId) {
+        return findMatching(user -> Objects.equals(user.regionId(), regionId));
     }
 
     @Override
@@ -43,7 +49,28 @@ public class FakeUserRepository extends FakeRepository<User, String> implements 
             final String storeId,
             final String department,
             final boolean active) {
-        save(new User(id, id + "@storeops.example", "Staff " + id, role, storeId, "region-north",
+        return withRegion(id, role, storeId, SEED_REGION, department, active);
+    }
+
+    /**
+     * Adds an active staff member in a named region.
+     *
+     * <p>Needed by the regional rollup tests: the region is the only record of which stores a
+     * region contains, so a test covering a second region has to be able to say so.
+     */
+    public FakeUserRepository withRegion(
+            final String id, final StaffRole role, final String storeId, final String regionId) {
+        return withRegion(id, role, storeId, regionId, "OPERATIONS", true);
+    }
+
+    private FakeUserRepository withRegion(
+            final String id,
+            final StaffRole role,
+            final String storeId,
+            final String regionId,
+            final String department,
+            final boolean active) {
+        save(new User(id, id + "@storeops.example", "Staff " + id, role, storeId, regionId,
                 active, new UserProfile(null, department, "EARLY"), REGISTERED));
         return this;
     }

@@ -50,6 +50,26 @@ public class UserService {
     }
 
     /**
+     * Roster for every store in one region.
+     *
+     * <p>This is how the reports module discovers which stores a region contains. StoreOps has no
+     * {@code Store} entity, so {@code users.region_id} is the only record of that membership, and a
+     * regional rollup cannot be built without reading it. Exposed here rather than left to a join,
+     * because {@code UserRepository} is off limits outside this module.
+     *
+     * <p>Leavers are included, matching {@link #findByStoreId}: the reports module counts them.
+     *
+     * @param regionId region to look in; a null or blank id returns empty rather than every region
+     * @return matching staff, never null
+     */
+    public List<User> findByRegionId(final String regionId) {
+        if (regionId == null || regionId.isBlank()) {
+            return List.of();
+        }
+        return userRepository.findByRegionId(regionId);
+    }
+
+    /**
      * Active staff at one store holding one role, lowest id first.
      *
      * <p>Exists for alert routing: the alerts module needs to name a Department Lead or a Store

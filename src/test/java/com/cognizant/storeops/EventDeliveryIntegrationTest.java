@@ -112,6 +112,38 @@ class EventDeliveryIntegrationTest {
     }
 
     @Test
+    @DisplayName("requesting a regional rollup reaches the reports module's own listener")
+    void requestedRollupReachesReportsListener() {
+        final int before = reportService.findByScopeId("region-north").size();
+
+        reportService.regionalRollup("region-north", "user-001");
+
+        // The production subscriber, not a test double: ReportEventListener.onRegionalRollupRequested
+        // queued this row after the read committed. Both halves of the wiring are load-bearing here -
+        // without @Transactional on the publisher the listener never runs, and without
+        // @Transactional(REQUIRES_NEW) on the listener it runs but its write is never flushed.
+        final List<Report> reports = reportService.findByScopeId("region-north");
+        assertThat(reports).hasSize(before + 1);
+        assertThat(reports.getLast().reportType()).isEqualTo(ReportType.REGIONAL_ROLLUP);
+        assertThat(reports.getLast().requestedBy()).isEqualTo("user-001");
+    }
+
+    @Test
+    @DisplayName("closing a programme still queues only a STORE_SUMMARY, never a rollup")
+    void programmeCloseIsUnaffectedByTheRollupHandler() {
+        final Project project = projectService.create(new CreateProjectRequest(
+                "Delivery check handler separation", null, "store-001", "region-north", "user-002"));
+
+        projectService.close(project.id(), "user-002");
+
+        // Scenario 7: the two handlers respond to different events. A programme close must not
+        // produce a REGIONAL_ROLLUP, and store-001 is not a region id.
+        assertThat(reportService.findByScopeId("store-001"))
+                .isNotEmpty()
+                .allSatisfy(report -> assertThat(report.reportType()).isEqualTo(ReportType.STORE_SUMMARY));
+    }
+
+    @Test
     @DisplayName("a rolled back transaction delivers nothing - the point of after-commit dispatch")
     void rollbackDeliversNothing() {
         final Task task = createTask("Delivery check - rollback");

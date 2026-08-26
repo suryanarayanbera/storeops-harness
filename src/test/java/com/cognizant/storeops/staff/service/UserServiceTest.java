@@ -97,6 +97,50 @@ class UserServiceTest {
     }
 
     @Test
+    @DisplayName("findByRegionId returns every staff member in the region, across all its stores")
+    void findByRegionIdSpansStores() {
+        userRepository.withSeedRoster();
+
+        // This read is what lets the reports module resolve region-north to store-001 and store-002;
+        // there is no Store entity, so users.region_id is the only record of that membership.
+        assertThat(userService.findByRegionId("region-north")).extracting(User::id)
+                .containsExactly("user-001", "user-002", "user-003", "user-004", "user-005");
+        assertThat(userService.findByRegionId("region-north")).extracting(User::storeId)
+                .contains("store-001", "store-002");
+    }
+
+    @Test
+    @DisplayName("findByRegionId returns empty for an unknown region rather than throwing")
+    void findByRegionIdReturnsEmptyForAnUnknownRegion() {
+        userRepository.withSeedRoster();
+
+        assertThat(userService.findByRegionId("region-atlantis")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findByRegionId returns empty for a null or blank region, never every region")
+    void findByRegionIdRejectsBlankCriteriaByReturningEmpty() {
+        userRepository.withSeedRoster();
+
+        assertThat(userService.findByRegionId(null)).isEmpty();
+        assertThat(userService.findByRegionId("")).isEmpty();
+        assertThat(userService.findByRegionId("   ")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("findByRegionId keeps regions apart")
+    void findByRegionIdSeparatesRegions() {
+        userRepository
+                .withRegion("user-020", StaffRole.STORE_MANAGER, "store-009", "region-south")
+                .withRegion("user-021", StaffRole.ASSOCIATE, "store-001", "region-north");
+
+        assertThat(userService.findByRegionId("region-south")).extracting(User::id)
+                .containsExactly("user-020");
+        assertThat(userService.findByRegionId("region-north")).extracting(User::id)
+                .containsExactly("user-021");
+    }
+
+    @Test
     @DisplayName("findById is a non-throwing lookup and exists agrees with it")
     void findByIdIsNonThrowing() {
         userRepository.withSeedRoster();
