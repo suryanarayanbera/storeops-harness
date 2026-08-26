@@ -64,29 +64,14 @@ docker compose logs --tail=20 storeops-api      # look for "Started StoreOpsAppl
 
 # 4. Confirm the API answers from inside the Codespace.
 curl -s http://localhost:8080/api/tasks | head -c 400
-```
 
-Codespaces auto-forwards 8080 once the container binds it. The forwarded port is **private by
-default** — a reviewer following the URL without access to the Codespace gets a GitHub login page,
-not the API. To hand the URL to someone else, make the port public:
-
-```bash
 # 5. Make port 8080 publicly reachable and print the forwarded URL.
-gh codespace ports visibility 8080:public -c "$CODESPACE_NAME"
-echo "https://${CODESPACE_NAME}-8080.app.github.dev"
-```
-
-## 5. Evidence — the harness-generated endpoints responding
-
-All four features below were built by the harness during the demonstration run; none existed in the
-`baseline: generated StoreOps scaffold` commit. The full contract → generator-summary →
-evaluator-feedback → run-log chain for each is in [.harness/reviews/](.harness/reviews/).
-
-Substitute `$BASE` for `http://localhost:8080` inside the Codespace, or for the forwarded
-`https://…app.github.dev` URL from outside.
-
-> **TO COMPLETE:** run the four calls below in the Codespace and paste the response bodies into the
-> empty blocks. Nothing else in this file needs editing.
+gh codespace code -c $codespace_name
+Then it will open editor
+Then in the Ports panel (bottom panel, next to Terminal):
+Forward a Port → 8080
+Right-click the row → Port Visibility → Public
+The Forwarded Address column is your URL — https://$codebase_name$-8080.app.github.dev
 
 ### 5.1 Shift handover bulk update — `PATCH /api/tasks/bulk-status`
 
