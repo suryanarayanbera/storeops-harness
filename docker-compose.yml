@@ -1,0 +1,23 @@
+# StoreOps API — single service.
+#
+# There is no database service and no volume on purpose: storage is in-memory H2, rebuilt from
+# src/main/resources/data.sql on every start (see application.yml). State is deliberately
+# ephemeral, which is what makes the seeded curl examples in DEPLOYMENT.md reproducible.
+#
+# No healthcheck: the eclipse-temurin JRE image carries no curl or wget, and adding a package to
+# the runtime image purely so `docker ps` can print "healthy" is not worth the extra surface. This
+# is a single service with nothing depending on it — readiness is `GET /api/tasks` returning 200.
+services:
+  storeops-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: storeops-api:0.1.0-SNAPSHOT
+    container_name: storeops-api
+    ports:
+      - "8080:8080"
+    environment:
+      # Matches the Dockerfile default. Overridden here so the heap ceiling is visible in the
+      # compose file rather than buried in the image.
+      JAVA_OPTS: "-XX:MaxRAMPercentage=75"
+    restart: unless-stopped
