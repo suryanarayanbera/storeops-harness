@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storeops-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: storeops-api
+  template:
+    metadata:
+      labels:
+        app: storeops-api
+    spec:
+      containers:
+      - name: storeops-api
+        image: LOCATION-docker.pkg.dev/PROJECT_ID/REPO_NAME/storeops-api:v1
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storeops-api-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: storeops-api
+  ports:
+  - port: 80
+    targetPort: 8080
